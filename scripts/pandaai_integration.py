@@ -226,6 +226,34 @@ def _margin_direction(df: pd.DataFrame) -> Dict:
 # 批量回测 — 解决"LLM confidence 到底有没有用"的核心问题
 # ═══════════════════════════════════════════════════════════════
 
+def _format_symbol(code: str) -> str:
+    """将 6 位代码转为 PandaAI 格式: 000001 → 000001.SZ, 600001 → 600001.SH"""
+    if len(code) == 6:
+        return f"{code}.SZ" if code.startswith(("0", "3")) else f"{code}.SH"
+    return code
+
+
+def _iter_stocks_from_row(row) -> list:
+    """从 Parquet 行中提取所有股票代码（而非仅 target_id）"""
+    stocks = []
+    try:
+        rj = json.loads(row["result_json"])
+        for sc in rj.get("stock_codes", []):
+            code = sc.get("code", "")
+            name = sc.get("name", "")
+            if code and code.isdigit() and len(code) == 6:
+                stocks.append((code, name))
+    except Exception:
+        pass
+    # 回退: 用 target_id
+    if not stocks:
+        tid = str(row.get("target_id", ""))
+        code = tid.split("_")[0]
+        if code.isdigit() and len(code) == 6:
+            stocks.append((code, ""))
+    return stocks
+
+
 def backtest(parquet_path: str, lookahead: int = 1) -> pd.DataFrame:
     """
     从打分后的 Parquet 逐条对照实际股价，输出:
@@ -233,8 +261,6 @@ def backtest(parquet_path: str, lookahead: int = 1) -> pd.DataFrame:
     - 每条信号的 confidence vs 实际涨跌幅
     - 按 confidence 分桶的胜率
     - 按 direction 分桶的胜率
-
-    这是验证整个 skill 价值的核心函数。
     """
     require_panda()
 
@@ -249,37 +275,34 @@ def backtest(parquet_path: str, lookahead: int = 1) -> pd.DataFrame:
         if not score:
             continue
 
-        # 提取纯股票代码
-        tid = str(row.get("target_id", ""))
-        symbol = tid.split("_")[0]
-        if not symbol or not symbol[0].isdigit():
+        stocks = _iter_stocks_from_row(row)
+        if not stocks:
             continue
 
-        # 格式化为 PandaAI 需要的格式
-        if len(symbol) == 6:
-            symbol = f"{symbol}.SZ" if symbol.startswith(("0", "3")) else f"{symbol}.SH"
-
-        try:
-            price = get_price_daily(
-                symbol,
-                row["trade_date"],
-                (datetime.strptime(str(row["trade_date"]), "%Y-%m-%d") + timedelta(days=lookahead + 1)).strftime("%Y-%m-%d"),
-            )
-            tdate = str(row["trade_date"])
-            if tdate in price.index:
-                r = float(price.loc[tdate, "next_return"])
-                direction = str(score.get("trading_direction", "hold"))
-                rows.append({
-                    "symbol": symbol,
-                    "date": tdate,
-                    "direction": direction,
-                    "confidence": float(score.get("confidence", 0)),
-                    "sentiment": str(score.get("sentiment", "neutral")),
-                    "actual_return_pct": round(r * 100, 2),
-                    "correct": (direction == "bullish" and r > 0) or (direction == "bearish" and r < 0),
-                })
-        except Exception as e:
-            logger.warning(f"回测异常 {symbol} {row['trade_date']}: {e}")
+        for code, name in stocks:
+            symbol = _format_symbol(code)
+            try:
+                price = get_price_daily(
+                    symbol,
+                    row["trade_date"],
+                    (datetime.strptime(str(row["trade_date"]), "%Y-%m-%d") + timedelta(days=lookahead + 1)).strftime("%Y-%m-%d"),
+                )
+                tdate = str(row["trade_date"])
+                if tdate in price.index:
+                    r = float(price.loc[tdate, "next_return"])
+                    direction = str(score.get("trading_direction", "hold"))
+                    rows.append({
+                        "symbol": symbol,
+                        "name": name,
+                        "date": tdate,
+                        "direction": direction,
+                        "confidence": float(score.get("confidence", 0)),
+                        "sentiment": str(score.get("sentiment", "neutral")),
+                        "actual_return_pct": round(r * 100, 2),
+                        "correct": (direction == "bullish" and r > 0) or (direction == "bearish" and r < 0),
+                    })
+            except Exception as e:
+                logger.warning(f"回测异常 {symbol} {row['trade_date']}: {e}")
 
     result = pd.DataFrame(rows)
 

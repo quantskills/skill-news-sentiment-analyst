@@ -81,7 +81,8 @@ print(f"涉及板块: {pipeline['summary']['sectors_found']}")
 from build import score_single_news
 
 for item in pipeline["prompts"]:
-    score = score_single_news(pipeline["parquet_path"], item["idx"], llm_json)
+    llm_response = '{"sentiment":"positive",...}'  # 替换为实际 LLM 输出
+    score = score_single_news(pipeline["parquet_path"], item["idx"], llm_response)
     print(f"  {item['news_title'][:30]}... → {score['sentiment']} {score['trading_direction']} conf={score['confidence']}")
 ```
 
