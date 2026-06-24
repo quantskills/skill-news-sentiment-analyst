@@ -8,10 +8,9 @@ description: A-share financial news sentiment analyst. Collects news from 3 sour
 A 股财经新闻情感分析师 — 采集新闻 → 提取实体 → 生成 LLM prompt → 输出 Parquet
 
 ## 工具定位
-- 工具类型：数据采集 + 结构化输出 + 可选信号验证
-- 解决问题：从多源财经新闻中提取结构化数据，生成分析师级 LLM prompt，供 Agent 进行情感分析和交易方向判断
+- 工具类型：数据采集 + 结构化输出 + 信号验证
+- 解决问题：从多源财经新闻中提取结构化数据，生成分析师级 LLM prompt，交叉验证信号与实际行情/资金的一致性
 - 使用对象：agent / Alpha / 人工分析
-- 增强能力：配置 PandaAI 后可回测信号胜率、验证资金流向与新闻情绪的一致性
 
 ## 何时使用
 
@@ -139,18 +138,16 @@ Parquet 字段：trade_date, build_id, build_name, target_id, result_type, resul
 
 详见 [references/api_guide.md](references/api_guide.md)
 
-## 第五步（可选）：PandaAI 交叉验证
-
-如果用户已配置 PandaAI（`.env` 中有凭证），可在输出信号后运行回测：
+## 第五步：PandaAI 交叉验证
 
 ```python
 from pandaai_integration import backtest
 
-# 批量回测 — 用实际股价验证每条信号的胜率
+# 用实际股价验证信号胜率
 backtest(pipeline['parquet_path'])
 ```
 
-回测输出包括 confidence 分桶胜率对照表，帮助判断 LLM 的 confidence 是否真有预测力。
+回测输出 confidence 分桶胜率对照表。
 
 ## 可被 Alpha 调用
 - 是
@@ -171,29 +168,23 @@ backtest(pipeline['parquet_path'])
 
 安装：`pip install akshare pandas pyarrow`
 
-### PandaAI 增强（可选）
-
-**配置后可将信号验证从"LLM 自我感觉"升级为"多维度交叉验证"。**
+### PandaAI 数据服务
 
 ```bash
-# 1. 安装 SDK
+# 安装 SDK
 pip install panda_data
 
-# 2. 配置凭证
+# 配置凭证
 cp .env.example .env
 # 编辑 .env 填入:
 #   PANDA_DATA_USERNAME=86你的手机号
 #   PANDA_DATA_PASSWORD=你的密码
 
-# 3. 验证连接
+# 验证
 python scripts/pandaai_integration.py --market-scan
 ```
 
-> Elite 套餐(¥153/月)含融资融券+北向资金+龙虎榜+财务数据，适合完整验证流程。
-
-**未配置时不影响核心新闻采集**，只是增强功能（回测、资金流验证、内部人信号）不会启用。
-
-> 注册订阅: https://www.pandaai.online/data-service
+> Elite 套餐(¥153/月)含融资融券+北向资金+龙虎榜+财务数据。注册: https://www.pandaai.online/data-service
 
 ## 注意事项
 

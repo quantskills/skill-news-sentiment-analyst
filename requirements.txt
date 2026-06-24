@@ -1,6 +1,4 @@
 akshare>=1.10.0
 pandas>=1.5.0
 pyarrow>=10.0.0
-# panda_data  # 可选增强: 信号回测验证 / 资金流向 / 内部人信号
-              # pip install panda_data
-              # 配置: export PANDA_DATA_TOKEN="xxx"
+panda_data

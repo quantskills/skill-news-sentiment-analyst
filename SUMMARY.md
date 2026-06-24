@@ -7,7 +7,7 @@
 | 架构设计 | ⭐⭐⭐⭐⭐ | 三层清晰：AKShare(采集) → Skill(结构化) → PandaAI(验证) |
 | 代码质量 | ⭐⭐⭐⭐☆ | 类型提示较好，错误处理到位，认证模块简洁 |
 | 测试覆盖 | ⭐⭐⭐⭐⭐ | 10 测试模块 30+ 用例，覆盖全链路 |
-| Skill 规范 | ⭐⭐⭐⭐⭐ | SKILL.md 含 5 步执行流程 + 可选验证步骤 |
+| Skill 规范 | ⭐⭐⭐⭐⭐ | SKILL.md 含 5 步执行流程，含 PandaAI 交叉验证 |
 | 文档完整度 | ⭐⭐⭐⭐⭐ | README + SKILL + SUMMARY + API 指南 + 数据源 + PandaAI 目录 |
 | 生产就绪度 | ⭐⭐⭐⭐☆ | 核心 + 验证完备，未加 API 限流 |
 
@@ -17,7 +17,7 @@
 
 ```
                       ┌─ 数据采集 ─┐  ┌─ 信号验证 ──────────────┐
-                      │  AKShare    │  │  PandaAI (可选)           │
+                      │  AKShare    │  │  PandaAI                  │
                       │  3源新闻    │  │  get_stock_daily  价格    │
                       │  股票映射   │  │  get_margin       融资    │
                       │  指数/板块  │  │  get_hsgt_hold    北向    │
@@ -48,7 +48,7 @@
 **核心设计决策：**
 - **Skill 不做决策，只做数据** — 采集和结构化由 Python 完成，分析和打分由 LLM/Agent 完成
 - **Parquet 作为 Skill↔Agent 契约** — 10 字段 schema，`pending_ai_analysis` → `data_ready` 状态机
-- **验证层与采集层解耦** — PandaAI 可选，未配置不影响核心管线
+- **验证层与采集层解耦** — 各层独立可替换，PandaAI 未配置时降级跳过
 - **凭证单一来源** — 环境变量 + `.env` 文件，无硬编码，已 gitignore
 
 ---
@@ -57,12 +57,12 @@
 
 | 文件 | 行数 | 职责 |
 |------|:----:|------|
-| `scripts/build.py` | 700 | 核心引擎：采集、提取、结构化、Parquet 读写、信号生成、市场背景增强 |
+| `scripts/build.py` | 700 | 核心引擎：采集、提取、结构化、Parquet 读写、信号生成、市场背景 |
 | `scripts/sentiment.py` | 202 | LLM prompt 生成（含 4 Few-shot + 7步CoT）+ 响应解析（4格式降级） |
 | `scripts/auth.py` | 124 | PandaAI 凭证管理：`.env` 加载 → `panda_data.init_token()` |
 | `scripts/pandaai_integration.py` | 399 | 交叉验证引擎：verify_signal / backtest / market_scan |
 | `scripts/test.py` | 470 | 10 模块测试，覆盖输入校验到 LLM 解析全链路 |
-| `SKILL.md` | ~195 | Claude Code skill 定义：5 步执行流程 + 可选 PandaAI 验证 |
+| `SKILL.md` | ~195 | Claude Code skill 定义：5 步执行流程 |
 | `README.md` | ~350 | 完整项目文档：安装 / 快速开始 / 架构 / 验证 / 测试 |
 | `references/api_guide.md` | 171 | API 调用示例、字段说明、选股信号接口 |
 | `references/data_sources.md` | 66 | AKShare 接口速查 |
@@ -88,10 +88,10 @@ AKShare（免费采集） → Skill（结构化） → PandaAI（付费验证）
 - `panda_data.init_token(username="86手机号", password="密码")` 唯一登录方式
 
 ### 5. 交叉验证引擎
-`backtest()` 用实际股价逐条验证 LLM 信号，输出 confidence 分桶胜率对照表 — 直接回答"confidence 0.85 到底准不准"。
+`backtest()` 用实际股价逐条验证 LLM 信号，输出 confidence 分桶胜率对照表。
 
 ### 6. 容错设计
-每个数据源独立 try/except；PandaAI 不可用时静默降级为纯 AKShare 模式。
+每个数据源独立 try/except；PandaAI 不可用时交叉验证静默跳过。
 
 ---
 
@@ -104,7 +104,7 @@ run_full_pipeline(trade_date, ...) → { parquet_path, news_count, prompts, summ
 score_single_news(parquet_path, idx, llm_response) → score
 generate_signal_list(parquet_path, min_confidence?) → signals
 
-# PandaAI 验证（可选）
+# PandaAI 验证
 init_pandaai() → bool
 verify_signal(symbol, sentiment, confidence, date) → 4维验证结果
 backtest(parquet_path) → pd.DataFrame (confidence分桶胜率表)
@@ -120,7 +120,7 @@ market_scan(trade_date) → 指数+北向+龙虎榜全景
 | `akshare` | >= 1.10.0 | A 股新闻+行情+映射 | ✓ |
 | `pandas` | >= 1.5.0 | 数据处理 + Parquet | ✓ |
 | `pyarrow` | >= 10.0.0 | Parquet 引擎 | ✓ |
-| `panda_data` | latest | 价格/融资/北向/龙虎榜 | 可选 |
+| `panda_data` | latest | 价格/融资/北向/龙虎榜 | ✓ |
 
 ---
 

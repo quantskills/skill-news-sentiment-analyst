@@ -5,7 +5,7 @@ PandaAI 认证模块 — 手机号+密码登录，凭证只从环境变量读取
 - 只有一种登录方式: panda_data.init_token(username="86手机号", password="密码")
 - 凭证来源: 环境变量 PANDA_DATA_USERNAME / PANDA_DATA_PASSWORD
 - 也支持从 .env 文件加载（.env 已 gitignore）
-- PandaAI 为可选增强，未配置时不影响核心新闻采集
+- PandaAI 未配置时核心新闻采集照常工作
 
 用法:
     from auth import init_pandaai, PANDA_AVAILABLE
@@ -24,7 +24,7 @@ PANDA_AVAILABLE = False
 
 _SETUP_MSG = """\
 ╔══════════════════════════════════════════════════════════════╗
-║  PandaAI 数据服务未配置（可选增强，不影响新闻采集）          ║
+║  PandaAI 数据服务未配置（新闻采集不受影响）                 ║
 ║                                                            ║
 ║  配置步骤:                                                  ║
 ║  1. cd {skill_dir}                                        ║

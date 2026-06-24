@@ -1,7 +1,7 @@
 {
   "name": "news-sentiment-analyst",
   "version": "1.2.0",
-  "description": "A-share financial news sentiment analyst with optional PandaAI signal verification (backtest, margin, northbound, LHB)",
+  "description": "A-share financial news sentiment analyst. Collects news, generates LLM prompts with 7-step causal reasoning, outputs structured Parquet, and cross-validates signals against price action, margin, northbound, and LHB data via PandaAI.",
   "author": "Erkan9527",
   "license": "Apache-2.0"
 }

@@ -22,7 +22,7 @@ A 股财经新闻 → 结构化数据 → LLM 情感分析 → 多维度交叉�
                                          └──────┬───────┘
                                                 │
                               ┌─────────────────▼─────────────────┐
-                              │  PandaAI 交叉验证（可选增强）       │
+                              │  PandaAI 交叉验证                  │
                               │  价格回测 │ 融资融券 │ 北向 │ 龙虎榜 │
                               └───────────────────────────────────┘
 ```
@@ -66,7 +66,7 @@ A 股财经新闻 → 结构化数据 → LLM 情感分析 → 多维度交叉�
 - 置信度过滤（默认 >= 0.5）
 - 按置信度降序排列
 
-### 🔬 信号验证（PandaAI 可选增强）
+### 🔬 信号验证
 - **价格回测：** 次日实际涨跌 vs LLM 预测方向
 - **资金流向：** 融资余额 + 北向资金是否同向
 - **内部人信号：** 业绩预告 / 回购 / 增减持
@@ -104,12 +104,11 @@ pip install -r .claude/skills/news-sentiment-analyst/requirements.txt
 
 > ℹ️ 安装后重启 Claude Code，skill 将被自动发现。
 
-### PandaAI 增强（可选）
+### PandaAI 数据服务
 
 ```bash
-# 安装 SDK + 配置凭证
 pip install panda_data
-cp ~/.claude/skills/news-sentiment-analyst/.env.example ~/.claude/skills/news-sentiment-analyst/.env
+cp .env.example .env
 # 编辑 .env 填入手机号和密码
 ```
 
@@ -289,9 +288,7 @@ signals = generate_signal_list("output/news_trading_2026-05-30.parquet", min_con
 
 ---
 
-## 🔬 信号验证（PandaAI 增强）
-
-**解决核心问题：LLM 的 confidence 是自我感觉还是真有预测力？**
+## 🔬 信号验证
 
 ### 4 维度交叉验证
 
@@ -427,7 +424,7 @@ python test.py
 
 详见 [data_sources.md](references/data_sources.md)。
 
-### 信号验证（PandaAI — 可选付费）
+### 信号验证（PandaAI）
 
 | 套餐 | 月费 | 包含数据 |
 |------|:----:|------|
@@ -443,9 +440,8 @@ python test.py
 - AKShare 接口有频率限制，建议请求间隔 1-2 秒
 - 新闻为实时快照，不支持历史数据
 - 按标题自动去重，跨源同一条新闻只保留一条
-- 市场背景自动采集（免费数据来自 AKShare，增强数据来自 PandaAI）
+- 市场背景自动采集（行情来自 AKShare，北向/龙虎榜来自 PandaAI）
 - 关联新闻自动匹配（同板块或同股票的其他新闻）
-- PandaAI 为可选增强，未配置时不影响核心新闻采集
 - `.env` 文件已加入 `.gitignore`，凭证不会被提交
 
 > **免责声明：** 本项目不构成任何形式的证券投资咨询或建议。项目所有输出，包括但不限于任何交易方向、标的筛选，仅为算法逻辑的示例性展示，不代表任何投资建议或承诺。明确反对使用者将本项目输出用于真实交易。任何使用者因参考本项目代码、逻辑或示例输出而进行真实交易，必须自行承担由此产生的全部盈亏和法律风险。本项目的作者的实盘操作与任何公开的代码及示例无关。本项目不提供任何形式的实时信号推送服务，不建立任何投资交流群组。
