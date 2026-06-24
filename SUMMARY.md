@@ -60,9 +60,9 @@
 | `scripts/build.py` | 713 | 核心引擎：采集→提取→PandaAI增强→结构化→Parquet→信号生成 |
 | `scripts/sentiment.py` | 226 | 数据感知 LLM prompt（7步CoT含数据交叉验证 + 4 Few-shot）+ 响应解析 |
 | `scripts/auth.py` | 124 | PandaAI 凭证管理：`.env` → `panda_data.init_token(phone, pw)` |
-| `scripts/pandaai_integration.py` | 637 | PandaAI 全功能：市场快照/股票上下文/信号增强/回测引擎 (16个API) |
-| `scripts/test.py` | 470 | 10 模块测试，覆盖输入校验到 LLM 解析全链路 |
-| `SKILL.md` | 215 | Claude Code skill 定义：第〇步(PandaAI配置引导) + 4步执行流程 |
+| `scripts/pandaai_integration.py` | 707 | PandaAI 全功能：市场/上下文/主动置信度调整/回测 (16 API) |
+| `scripts/test.py` | 470 | 10 模块测试 |
+| `SKILL.md` | 220 | 第〇步(PandaAI引导) + 4步流程 + 主动验证输出 |
 | `README.md` | 453 | 完整项目文档 |
 | `references/api_guide.md` | 171 | API 调用示例、字段说明 |
 | `references/data_sources.md` | 65 | AKShare 接口速查 |

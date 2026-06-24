@@ -171,7 +171,8 @@ def get_stock_context_batch(codes: List[str], trade_date: str) -> Dict:
         try:
             ind = pd_mod.get_stock_industry(stock_symbol=sym)
             if not _is_empty(ind):
-                ctx["industry"] = str(ind.iloc[0].to_dict()) if isinstance(ind, pd.DataFrame) else str(ind)
+                row = ind.iloc[0].to_dict() if isinstance(ind, pd.DataFrame) else ind
+                ctx["industry"] = row.get("industry_name", str(row))
         except Exception:
             pass
 
