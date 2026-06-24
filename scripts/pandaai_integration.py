@@ -125,9 +125,9 @@ def get_market_snapshot(trade_date: str) -> Dict:
 
 def get_stock_context_batch(codes: List[str], trade_date: str) -> Dict:
     """
-    批量获取股票的价格和融资上下文，供 sentiment.py 注入 LLM prompt。
+    批量获取股票多维上下文，供 sentiment.py 注入 LLM prompt。
 
-    返回: { code: { price: {...}, margin: "up"/"down"/None, industry: str } }
+    返回: { code: { price, margin, industry, pledge_ratio, holder_trend, fina } }
     """
     if not codes or not _ensure_connected():
         return {}
@@ -170,6 +170,42 @@ def get_stock_context_batch(codes: List[str], trade_date: str) -> Dict:
             ind = pd_mod.get_stock_industry(symbol=sym)
             if ind:
                 ctx["industry"] = ind if isinstance(ind, str) else str(ind)
+        except Exception:
+            pass
+
+        # 质押比例 — 风险标记
+        try:
+            pledge = pd_mod.get_stock_pledge_stat(symbol=sym)
+            if pledge and len(pledge) > 0:
+                ratio = pledge[-1].get("pledge_ratio") or pledge[-1].get("质押比例", 0)
+                if ratio:
+                    ctx["pledge_ratio"] = round(float(ratio), 1)
+        except Exception:
+            pass
+
+        # 股东人数趋势 — 筹码集中度
+        try:
+            holders = pd_mod.get_holder_count(symbol=sym, start_date=trade_date, end_date=trade_date)
+            if holders and len(holders) >= 2:
+                a = holders[0].get("holder_count") or holders[0].get("股东人数", 0) or 0
+                b = holders[-1].get("holder_count") or holders[-1].get("股东人数", 0) or 0
+                if a and b:
+                    ctx["holder_trend"] = "集中" if b < a else "分散"
+        except Exception:
+            pass
+
+        # 财务快报 — 基本面趋势
+        try:
+            fina = pd_mod.get_fina_performance(symbol=sym, start_date=trade_date, end_date=trade_date)
+            if fina and len(fina) > 0:
+                latest = fina[-1]
+                rev = latest.get("revenue") or latest.get("营业总收入", 0)
+                profit = latest.get("net_profit") or latest.get("净利润", 0)
+                if rev or profit:
+                    ctx["fina"] = {
+                        "revenue": rev,
+                        "net_profit": profit,
+                    }
         except Exception:
             pass
 
@@ -443,9 +479,11 @@ def enrich_signals(signals: list, trade_date: str) -> list:
     对 generate_signal_list() 的输出逐条注入 PandaAI 验证数据。
 
     每条信号新增 s['verify']:
-      price  — 最近1日/5日涨跌幅
-      margin — 融资余额方向 up/down
-      lhb    — 当日是否上榜龙虎榜
+      price        — 近1日/5日涨跌幅
+      margin       — 融资余额方向 up/down
+      lhb          — 是否上榜龙虎榜
+      lhb_detail   — 龙虎榜: 机构/游资净买额
+      pledge_risk  — 质押风险 (high/medium/low)
     """
     if not signals:
         return signals
@@ -471,24 +509,59 @@ def enrich_signals(signals: list, trade_date: str) -> list:
         except Exception:
             pass
 
-    # 龙虎榜
-    lhb_codes = set()
+    # 质押风险
+    pledge_cache = {}
+    for code in codes:
+        try:
+            pledge = pd_mod.get_stock_pledge_stat(symbol=_format_symbol(code))
+            if pledge and len(pledge) > 0:
+                ratio = float(pledge[-1].get("pledge_ratio") or pledge[-1].get("质押比例", 0))
+                if ratio > 50:
+                    pledge_cache[code] = "high"
+                elif ratio > 30:
+                    pledge_cache[code] = "medium"
+                else:
+                    pledge_cache[code] = "low"
+        except Exception:
+            pass
+
+    # 龙虎榜 + 明细
+    lhb_cache = {}  # code → {on_list, inst_net, retail_net}
     try:
-        lhb = pd_mod.get_lhb_list(trade_date=trade_date)
-        if lhb:
-            for item in lhb:
+        lhb_list = pd_mod.get_lhb_list(trade_date=trade_date)
+        if lhb_list:
+            for item in lhb_list:
                 sym = str(item.get("symbol", ""))
-                if len(sym) >= 6:
-                    lhb_codes.add(sym[-6:])
+                code = sym[-6:] if len(sym) >= 6 else sym
+                if code.isdigit() and len(code) == 6:
+                    lhb_cache[code] = {"on_list": True}
+
+        # 补充明细: 机构净买 vs 游资净买
+        for code in lhb_cache:
+            try:
+                detail = pd_mod.get_lhb_detail(symbol=_format_symbol(code), trade_date=trade_date)
+                if detail and len(detail) > 0:
+                    inst_buy = sum(float(d.get("buy_amount", 0) or 0) for d in detail if "机构" in str(d.get("trader_type", "")))
+                    retail_buy = sum(float(d.get("buy_amount", 0) or 0) for d in detail if "机构" not in str(d.get("trader_type", "")))
+                    lhb_cache[code]["inst_net"] = round(inst_buy, 0)
+                    lhb_cache[code]["retail_net"] = round(retail_buy, 0)
+            except Exception:
+                pass
     except Exception:
         pass
 
     for s in signals:
         code = s.get("code", "")
+        lhb = lhb_cache.get(code, {})
         s["verify"] = {
             "price": price_cache.get(code, {}),
             "margin": margin_cache.get(code),
-            "lhb": code in lhb_codes,
+            "lhb": lhb.get("on_list", False),
+            "lhb_detail": {
+                "inst_net": lhb.get("inst_net"),
+                "retail_net": lhb.get("retail_net"),
+            } if lhb.get("on_list") else None,
+            "pledge_risk": pledge_cache.get(code),
         }
 
     return signals

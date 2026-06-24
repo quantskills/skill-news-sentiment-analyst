@@ -96,16 +96,18 @@ signals = generate_signal_list(pipeline['parquet_path'], min_confidence=0.5)
 signals = enrich_signals(signals, today)
 
 print(f"## {today} 选股信号列表\n")
-print(f"| 股票代码 | 公司名称 | 方向 | 置信度 | 近1日涨跌 | 融资 | 龙虎榜 | 来源新闻 |")
-print(f"|----------|----------|------|--------|-----------|------|--------|----------|")
+print(f"| 股票代码 | 公司名称 | 方向 | 置信度 | 近1日 | 融资 | 龙虎榜 | 质押 | 来源新闻 |")
+print(f"|----------|----------|------|--------|-------|------|--------|------|----------|")
 for s in signals:
-    mark = "🟢买入" if s["direction"] == "bullish" else "🔴卖出"
+    mark = "🟢" if s["direction"] == "bullish" else "🔴"
     v = s.get("verify", {})
     px = v.get("price", {})
-    price_str = f"{px.get('latest_change_pct', 'N/A')}%"
-    margin_str = v.get("margin", "N/A") or "N/A"
+    price_str = f"{px.get('latest_change_pct', '-')}%"
+    margin_str = v.get("margin") or "-"
     lhb_str = "🔥" if v.get("lhb") else ""
-    print(f"| {s['code']} | {s['name']} | {mark} | {s['confidence']:.2f} | {price_str} | {margin_str} | {lhb_str} | {s['news_title']} |")
+    pledge = v.get("pledge_risk")
+    pledge_str = {"high": "⚠️高", "medium": "中", "low": "低"}.get(pledge, "-")
+    print(f"| {s['code']} | {s['name']} | {mark} {s['direction']} | {s['confidence']:.2f} | {price_str} | {margin_str} | {lhb_str} | {pledge_str} | {s['news_title']} |")
 print(f"\n共 {len(signals)} 个信号（置信度 >= 0.5）")
 ```
 

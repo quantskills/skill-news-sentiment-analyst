@@ -99,7 +99,7 @@ def generate_llm_prompt(
         entity_parts.append(f"事件类型: {', '.join(entities['events'][:3])}")
     entity_str = "; ".join(entity_parts) if entity_parts else "无"
 
-    # PandaAI 股票上下文: 价格、融资、行业
+    # PandaAI 股票上下文: 价格、融资、行业、质押、筹码、财务
     stock_ctx_section = ""
     if stock_context:
         lines = []
@@ -111,10 +111,17 @@ def generate_llm_prompt(
             if ctx.get("margin"):
                 parts.append(f"融资{'增' if ctx['margin'] == 'up' else '减'}")
             if ctx.get("industry"):
-                parts.append(f"行业: {ctx['industry']}")
+                parts.append(f"{ctx['industry']}")
+            if ctx.get("pledge_ratio"):
+                parts.append(f"质押{ctx['pledge_ratio']}%{'⚠' if ctx['pledge_ratio'] > 50 else ''}")
+            if ctx.get("holder_trend"):
+                parts.append(f"筹码{ctx['holder_trend']}")
+            if ctx.get("fina"):
+                f = ctx["fina"]
+                parts.append(f"营收{f.get('revenue')} 净利{f.get('net_profit')}")
             lines.append("  " + " | ".join(parts))
         if lines:
-            stock_ctx_section = "\n【涉及股票实时行情（来自 PandaAI）】\n" + "\n".join(lines) + "\n"
+            stock_ctx_section = "\n【涉及股票实时数据（来自 PandaAI）】\n" + "\n".join(lines) + "\n"
 
     context_section = ""
     if market_context:
