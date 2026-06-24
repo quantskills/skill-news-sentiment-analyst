@@ -48,7 +48,6 @@ def _format_symbol(code: str) -> str:
 
 
 def _ensure_connected() -> bool:
-    """确保 PandaAI 已连接，未连接返回 False"""
     try:
         from auth import is_panda_available
         if not is_panda_available():
@@ -58,21 +57,25 @@ def _ensure_connected() -> bool:
         return False
 
 
+def _is_empty(df) -> bool:
+    """判断 DataFrame 或 list 是否为空"""
+    if df is None:
+        return True
+    if isinstance(df, pd.DataFrame):
+        return df.empty
+    if isinstance(df, list):
+        return len(df) == 0
+    return False
+
+
 # ═══════════════════════════════════════════════════════════════
 # 市场快照 — build.py 的主数据源
 # ═══════════════════════════════════════════════════════════════
 
 def get_market_snapshot(trade_date: str) -> Dict:
     """
-    PandaAI 市场全景 — build.py 的 collect_market_context() 主数据源。
-
-    返回:
-        {
-            "indices": {"sh": close, "cy": close},
-            "northbound": count or None,
-            "lhb_count": int,
-            "available": bool
-        }
+    PandaAI 市场全景。返回:
+        {"available": True, "indices": {...}, "northbound": ..., "lhb_count": ...}
     """
     if not _ensure_connected():
         return {"available": False}
@@ -80,39 +83,37 @@ def get_market_snapshot(trade_date: str) -> Dict:
     pd_mod = _get_client()
     result = {"available": True, "indices": {}, "northbound": None, "lhb_count": 0}
 
-    # 上证指数
+    date_fmt = trade_date.replace("-", "")
+
     try:
-        sh = pd_mod.get_index_daily(symbol="000001.SH", start_date=trade_date, end_date=trade_date)
-        if sh and len(sh) > 0:
+        sh = pd_mod.get_index_daily(symbol="000001.SH", start_date=date_fmt, end_date=date_fmt)
+        if not _is_empty(sh):
             result["indices"]["sh"] = {
-                "close": sh[-1].get("close"),
-                "pct_change": sh[-1].get("pct_change"),
+                "close": sh.iloc[-1].get("close"),
+                "pct_change": sh.iloc[-1].get("pct_change"),
             }
     except Exception:
         pass
 
-    # 创业板指
     try:
-        cy = pd_mod.get_index_daily(symbol="399006.SZ", start_date=trade_date, end_date=trade_date)
-        if cy and len(cy) > 0:
+        cy = pd_mod.get_index_daily(symbol="399006.SZ", start_date=date_fmt, end_date=date_fmt)
+        if not _is_empty(cy):
             result["indices"]["cy"] = {
-                "close": cy[-1].get("close"),
-                "pct_change": cy[-1].get("pct_change"),
+                "close": cy.iloc[-1].get("close"),
+                "pct_change": cy.iloc[-1].get("pct_change"),
             }
     except Exception:
         pass
 
-    # 北向资金
     try:
-        nb = pd_mod.get_hsgt_hold(start_date=trade_date, end_date=trade_date)
-        result["northbound"] = len(nb) if isinstance(nb, (list, pd.DataFrame)) else None
+        nb = pd_mod.get_hsgt_hold(start_date=date_fmt, end_date=date_fmt)
+        result["northbound"] = len(nb) if not _is_empty(nb) else 0
     except Exception:
         pass
 
-    # 龙虎榜
     try:
-        lhb = pd_mod.get_lhb_list(trade_date=trade_date)
-        result["lhb_count"] = len(lhb) if isinstance(lhb, (list, pd.DataFrame)) else 0
+        lhb = pd_mod.get_lhb_list(start_date=date_fmt, end_date=date_fmt)
+        result["lhb_count"] = len(lhb) if not _is_empty(lhb) else 0
     except Exception:
         pass
 
@@ -134,17 +135,19 @@ def get_stock_context_batch(codes: List[str], trade_date: str) -> Dict:
 
     pd_mod = _get_client()
     result = {}
+    date_fmt = trade_date.replace("-", "")
+    start_7d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y%m%d")
+    start_5d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
 
     for code in codes:
         ctx = {}
         sym = _format_symbol(code)
 
-        # 近5日价格
+        # 近5日价格 (DataFrame)
         try:
-            start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
-            px = pd_mod.get_stock_daily(symbol=sym, start_date=start, end_date=trade_date, fields=["close"], adjust="pre")
-            if px:
-                closes = [x.get("close", 0) for x in px if x.get("close")]
+            px = pd_mod.get_stock_daily(symbol=sym, start_date=start_7d, end_date=date_fmt, fields=["close"])
+            if not _is_empty(px):
+                closes = px["close"].tolist()
                 if len(closes) >= 2:
                     ctx["price"] = {
                         "latest": closes[-1],
@@ -154,58 +157,67 @@ def get_stock_context_batch(codes: List[str], trade_date: str) -> Dict:
         except Exception:
             pass
 
-        # 融资方向
+        # 融资方向 (DataFrame)
         try:
-            start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y-%m-%d")
-            mg = pd_mod.get_margin(symbol=sym, start_date=start, end_date=trade_date)
-            if mg and len(mg) >= 2:
-                a = mg[0].get("margin_balance", 0) or 0
-                b = mg[-1].get("margin_balance", 0) or 0
+            mg = pd_mod.get_margin(symbol=sym, start_date=start_5d, end_date=date_fmt)
+            if not _is_empty(mg) and "margin_balance" in mg.columns and len(mg) >= 2:
+                a = mg["margin_balance"].iloc[0]
+                b = mg["margin_balance"].iloc[-1]
                 ctx["margin"] = "up" if b > a else "down"
         except Exception:
             pass
 
         # 行业分类
         try:
-            ind = pd_mod.get_stock_industry(symbol=sym)
-            if ind:
-                ctx["industry"] = ind if isinstance(ind, str) else str(ind)
+            ind = pd_mod.get_stock_industry(stock_symbol=sym)
+            if not _is_empty(ind):
+                ctx["industry"] = str(ind.iloc[0].to_dict()) if isinstance(ind, pd.DataFrame) else str(ind)
         except Exception:
             pass
 
-        # 质押比例 — 风险标记
+        # 质押 (DataFrame)
         try:
-            pledge = pd_mod.get_stock_pledge_stat(symbol=sym)
-            if pledge and len(pledge) > 0:
-                ratio = pledge[-1].get("pledge_ratio") or pledge[-1].get("质押比例", 0)
-                if ratio:
-                    ctx["pledge_ratio"] = round(float(ratio), 1)
+            pledge = pd_mod.get_stock_pledge(symbol=sym, start_date=start_7d, end_date=date_fmt)
+            if not _is_empty(pledge):
+                ratio = None
+                for col in ["pledge_ratio", "质押比例", "pledge_rate"]:
+                    if col in pledge.columns:
+                        ratio = float(pledge[col].iloc[-1])
+                        break
+                if ratio is not None:
+                    ctx["pledge_ratio"] = round(ratio, 1)
         except Exception:
             pass
 
-        # 股东人数趋势 — 筹码集中度
+        # 股东人数趋势 (DataFrame)
         try:
-            holders = pd_mod.get_holder_count(symbol=sym, start_date=trade_date, end_date=trade_date)
-            if holders and len(holders) >= 2:
-                a = holders[0].get("holder_count") or holders[0].get("股东人数", 0) or 0
-                b = holders[-1].get("holder_count") or holders[-1].get("股东人数", 0) or 0
+            holders = pd_mod.get_holder_count(symbol=sym, start_date=start_7d, end_date=date_fmt)
+            if not _is_empty(holders) and len(holders) >= 2:
+                hcol = "holder_count" if "holder_count" in holders.columns else holders.columns[0]
+                a = holders[hcol].iloc[0]
+                b = holders[hcol].iloc[-1]
                 if a and b:
                     ctx["holder_trend"] = "集中" if b < a else "分散"
         except Exception:
             pass
 
-        # 财务快报 — 基本面趋势
+        # 财务快报
         try:
-            fina = pd_mod.get_fina_performance(symbol=sym, start_date=trade_date, end_date=trade_date)
-            if fina and len(fina) > 0:
-                latest = fina[-1]
-                rev = latest.get("revenue") or latest.get("营业总收入", 0)
-                profit = latest.get("net_profit") or latest.get("净利润", 0)
+            fina = pd_mod.get_fina_performance(symbol=sym, end_quarter=date_fmt)
+            if _is_empty(fina):
+                fina = pd_mod.get_fina_performance(symbol=sym, info_date=date_fmt)
+            if not _is_empty(fina):
+                rev = profit = None
+                for col in ["revenue", "营业总收入", "total_revenue"]:
+                    if col in fina.columns:
+                        rev = fina[col].iloc[-1]
+                        break
+                for col in ["net_profit", "净利润", "net_income"]:
+                    if col in fina.columns:
+                        profit = fina[col].iloc[-1]
+                        break
                 if rev or profit:
-                    ctx["fina"] = {
-                        "revenue": rev,
-                        "net_profit": profit,
-                    }
+                    ctx["fina"] = {"revenue": rev, "net_profit": profit}
         except Exception:
             pass
 
@@ -222,14 +234,15 @@ def get_stock_price_snapshot(codes: List[str], trade_date: str) -> Dict:
 
     pd_mod = _get_client()
     result = {}
+    date_fmt = trade_date.replace("-", "")
+    start_7d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y%m%d")
 
     for code in codes:
         sym = _format_symbol(code)
         try:
-            start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
-            px = pd_mod.get_stock_daily(symbol=sym, start_date=start, end_date=trade_date, fields=["close"], adjust="pre")
-            if px:
-                closes = [x.get("close", 0) for x in px if x.get("close")]
+            px = pd_mod.get_stock_daily(symbol=sym, start_date=start_7d, end_date=date_fmt, fields=["close"])
+            if not _is_empty(px):
+                closes = px["close"].tolist()
                 if len(closes) >= 2:
                     chg = round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)
                     chg5 = round((closes[-1] - closes[0]) / closes[0] * 100, 2) if len(closes) >= 5 else None
@@ -248,10 +261,12 @@ def get_price_daily(symbol: str, start_date: str, end_date: str) -> pd.DataFrame
     """A股日线"""
     pd_mod = _get_client()
     data = pd_mod.get_stock_daily(
-        symbol=symbol, start_date=start_date, end_date=end_date,
-        fields=["open", "high", "low", "close", "volume", "amount"], adjust="pre",
+        symbol=symbol,
+        start_date=start_date.replace("-", ""),
+        end_date=end_date.replace("-", ""),
+        fields=["open", "high", "low", "close", "volume", "amount"],
     )
-    df = pd.DataFrame(data)
+    df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"])
         df.set_index("date", inplace=True)
@@ -264,8 +279,8 @@ def get_price_daily(symbol: str, start_date: str, end_date: str) -> pd.DataFrame
 def get_price_minutes(symbol: str, trade_date: str) -> pd.DataFrame:
     """A股分钟线"""
     pd_mod = _get_client()
-    data = pd_mod.get_stock_min(symbol=symbol, trade_date=trade_date, freq="1min")
-    df = pd.DataFrame(data)
+    data = pd_mod.get_stock_min(symbol=symbol, trade_date=trade_date.replace("-", ""), freq="1min")
+    df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
     logger.info(f"分钟线: {symbol} {trade_date} {len(df)} 条")
     return df
 
@@ -273,8 +288,12 @@ def get_price_minutes(symbol: str, trade_date: str) -> pd.DataFrame:
 def get_margin(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     """融资融券"""
     pd_mod = _get_client()
-    data = pd_mod.get_margin(symbol=symbol, start_date=start_date, end_date=end_date)
-    df = pd.DataFrame(data)
+    data = pd_mod.get_margin(
+        symbol=symbol,
+        start_date=start_date.replace("-", ""),
+        end_date=end_date.replace("-", ""),
+    )
+    df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
     logger.info(f"融资融券: {symbol} {len(df)} 条")
     return df
 
@@ -282,8 +301,11 @@ def get_margin(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
 def get_northbound(start_date: str, end_date: str) -> pd.DataFrame:
     """北向资金"""
     pd_mod = _get_client()
-    data = pd_mod.get_hsgt_hold(start_date=start_date, end_date=end_date)
-    df = pd.DataFrame(data)
+    data = pd_mod.get_hsgt_hold(
+        start_date=start_date.replace("-", ""),
+        end_date=end_date.replace("-", ""),
+    )
+    df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
     logger.info(f"北向资金: {len(df)} 条, {start_date} ~ {end_date}")
     return df
 
@@ -291,29 +313,33 @@ def get_northbound(start_date: str, end_date: str) -> pd.DataFrame:
 def get_lhb(trade_date: str) -> pd.DataFrame:
     """龙虎榜"""
     pd_mod = _get_client()
-    data = pd_mod.get_lhb_list(trade_date=trade_date)
-    df = pd.DataFrame(data)
+    data = pd_mod.get_lhb_list(
+        start_date=trade_date.replace("-", ""),
+        end_date=trade_date.replace("-", ""),
+    )
+    df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
     logger.info(f"龙虎榜: {trade_date} {len(df)} 条")
     return df
 
 
 def get_financial_events(symbol: str, start_date: str, end_date: str) -> Dict:
-    """内部人信号：业绩预告 + 回购 + 增减持 + 大宗交易 + 解禁"""
+    """内部人信号"""
     pd_mod = _get_client()
+    s = start_date.replace("-", "")
+    e = end_date.replace("-", "")
     events = {}
     fetchers = {
-        "fina_forecast": lambda: pd_mod.get_fina_forecast(symbol=symbol, start_date=start_date, end_date=end_date),
-        "repurchase": lambda: pd_mod.get_repurchase(symbol=symbol, start_date=start_date, end_date=end_date),
-        "shareholder_change": lambda: pd_mod.get_stock_shareholder_change(symbol=symbol, start_date=start_date, end_date=end_date),
-        "block_trade": lambda: pd_mod.get_block_trade(symbol=symbol, start_date=start_date, end_date=end_date),
-        "restricted": lambda: pd_mod.get_restricted_list(symbol=symbol, start_date=start_date, end_date=end_date),
+        "fina_forecast": lambda: pd_mod.get_fina_forecast(symbol=symbol, start_date=s, end_date=e),
+        "repurchase": lambda: pd_mod.get_repurchase(symbol=symbol, start_date=s, end_date=e),
+        "shareholder_change": lambda: pd_mod.get_stock_shareholder_change(symbol=symbol, start_date=s, end_date=e),
+        "block_trade": lambda: pd_mod.get_block_trade(symbol=symbol, start_date=s, end_date=e),
+        "restricted": lambda: pd_mod.get_restricted_list(symbol=symbol, start_date=s, end_date=e),
     }
     for name, fetcher in fetchers.items():
         try:
             events[name] = fetcher()
         except Exception as e:
-            logger.debug(f"{name} 获取失败: {e}")
-    logger.info(f"内部人事件: {symbol} {list(events.keys())}")
+            logger.debug(f"{name}: {e}")
     return events
 
 
@@ -353,7 +379,7 @@ def verify_signal(symbol: str, news_sentiment: str, news_confidence: float,
     try:
         fe = get_financial_events(symbol, start, end)
         result["verification"]["insider"] = {
-            k: f"{len(v) if isinstance(v, (list, pd.DataFrame)) else 'OK'}" for k, v in fe.items()
+            k: f"{len(v) if not _is_empty(v) else 0}" for k, v in fe.items()
         }
     except Exception as e:
         result["verification"]["insider"] = {"error": str(e)}
@@ -370,7 +396,7 @@ def verify_signal(symbol: str, news_sentiment: str, news_confidence: float,
 
 
 def _margin_direction(df: pd.DataFrame) -> Dict:
-    if df.empty:
+    if _is_empty(df):
         return {"status": "no_data"}
     try:
         if "margin_balance" in df.columns and len(df) >= 2:
@@ -425,11 +451,9 @@ def backtest(parquet_path: str, lookahead: int = 1) -> pd.DataFrame:
         for code, name in stocks:
             symbol = _format_symbol(code)
             try:
-                price = get_price_daily(
-                    symbol, row["trade_date"],
-                    (datetime.strptime(str(row["trade_date"]), "%Y-%m-%d") + timedelta(days=lookahead + 1)).strftime("%Y-%m-%d"),
-                )
                 tdate = str(row["trade_date"])
+                end_date = (datetime.strptime(tdate, "%Y-%m-%d") + timedelta(days=lookahead + 1)).strftime("%Y-%m-%d")
+                price = get_price_daily(symbol, tdate, end_date)
                 if tdate in price.index:
                     r = float(price.loc[tdate, "next_return"])
                     direction = str(score.get("trading_direction", "hold"))
@@ -477,13 +501,7 @@ def backtest(parquet_path: str, lookahead: int = 1) -> pd.DataFrame:
 def enrich_signals(signals: list, trade_date: str) -> list:
     """
     对 generate_signal_list() 的输出逐条注入 PandaAI 验证数据。
-
-    每条信号新增 s['verify']:
-      price        — 近1日/5日涨跌幅
-      margin       — 融资余额方向 up/down
-      lhb          — 是否上榜龙虎榜
-      lhb_detail   — 龙虎榜: 机构/游资净买额
-      pledge_risk  — 质押风险 (high/medium/low)
+    每条新增 s['verify']: {price, margin, lhb, lhb_detail, pledge_risk}
     """
     if not signals:
         return signals
@@ -492,6 +510,9 @@ def enrich_signals(signals: list, trade_date: str) -> list:
 
     pd_mod = _get_client()
     codes = list({s["code"] for s in signals if s.get("code")})
+    date_fmt = trade_date.replace("-", "")
+    start_5d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
+    start_7d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y%m%d")
 
     # 价格
     price_cache = get_stock_price_snapshot(codes, trade_date)
@@ -500,11 +521,10 @@ def enrich_signals(signals: list, trade_date: str) -> list:
     margin_cache = {}
     for code in codes:
         try:
-            start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y-%m-%d")
-            mg = pd_mod.get_margin(symbol=_format_symbol(code), start_date=start, end_date=trade_date)
-            if mg and len(mg) >= 2:
-                a = mg[0].get("margin_balance", 0) or 0
-                b = mg[-1].get("margin_balance", 0) or 0
+            mg = pd_mod.get_margin(symbol=_format_symbol(code), start_date=start_5d, end_date=date_fmt)
+            if not _is_empty(mg) and "margin_balance" in mg.columns and len(mg) >= 2:
+                a = mg["margin_balance"].iloc[0]
+                b = mg["margin_balance"].iloc[-1]
                 margin_cache[code] = "up" if b > a else "down"
         except Exception:
             pass
@@ -513,38 +533,56 @@ def enrich_signals(signals: list, trade_date: str) -> list:
     pledge_cache = {}
     for code in codes:
         try:
-            pledge = pd_mod.get_stock_pledge_stat(symbol=_format_symbol(code))
-            if pledge and len(pledge) > 0:
-                ratio = float(pledge[-1].get("pledge_ratio") or pledge[-1].get("质押比例", 0))
-                if ratio > 50:
-                    pledge_cache[code] = "high"
-                elif ratio > 30:
-                    pledge_cache[code] = "medium"
-                else:
-                    pledge_cache[code] = "low"
+            pledge = pd_mod.get_stock_pledge(symbol=_format_symbol(code), start_date=start_7d, end_date=date_fmt)
+            if not _is_empty(pledge):
+                for col in ["pledge_ratio", "质押比例", "pledge_rate"]:
+                    if col in pledge.columns:
+                        ratio = float(pledge[col].iloc[-1])
+                        if ratio > 50:
+                            pledge_cache[code] = "high"
+                        elif ratio > 30:
+                            pledge_cache[code] = "medium"
+                        else:
+                            pledge_cache[code] = "low"
+                        break
         except Exception:
             pass
 
     # 龙虎榜 + 明细
-    lhb_cache = {}  # code → {on_list, inst_net, retail_net}
+    lhb_cache = {}
     try:
-        lhb_list = pd_mod.get_lhb_list(trade_date=trade_date)
-        if lhb_list:
-            for item in lhb_list:
+        lhb_list = pd_mod.get_lhb_list(start_date=date_fmt, end_date=date_fmt)
+        if not _is_empty(lhb_list):
+            for _, item in lhb_list.iterrows():
                 sym = str(item.get("symbol", ""))
                 code = sym[-6:] if len(sym) >= 6 else sym
                 if code.isdigit() and len(code) == 6:
                     lhb_cache[code] = {"on_list": True}
 
-        # 补充明细: 机构净买 vs 游资净买
-        for code in lhb_cache:
+        for code in list(lhb_cache.keys()):
             try:
-                detail = pd_mod.get_lhb_detail(symbol=_format_symbol(code), trade_date=trade_date)
-                if detail and len(detail) > 0:
-                    inst_buy = sum(float(d.get("buy_amount", 0) or 0) for d in detail if "机构" in str(d.get("trader_type", "")))
-                    retail_buy = sum(float(d.get("buy_amount", 0) or 0) for d in detail if "机构" not in str(d.get("trader_type", "")))
-                    lhb_cache[code]["inst_net"] = round(inst_buy, 0)
-                    lhb_cache[code]["retail_net"] = round(retail_buy, 0)
+                detail = pd_mod.get_lhb_detail(symbol=_format_symbol(code), start_date=date_fmt, end_date=date_fmt)
+                if not _is_empty(detail):
+                    inst_buy = 0
+                    retail_buy = 0
+                    trader_col = None
+                    for col in ["trader_type", "席位类型", "类型"]:
+                        if col in detail.columns:
+                            trader_col = col
+                            break
+                    amt_col = None
+                    for col in ["buy_amount", "买入金额", "amount"]:
+                        if col in detail.columns:
+                            amt_col = col
+                            break
+                    if trader_col and amt_col:
+                        for _, d in detail.iterrows():
+                            if "机构" in str(d.get(trader_col, "")):
+                                inst_buy += float(d.get(amt_col, 0) or 0)
+                            else:
+                                retail_buy += float(d.get(amt_col, 0) or 0)
+                    lhb_cache[code]["inst_net"] = round(inst_buy, 0) if inst_buy else None
+                    lhb_cache[code]["retail_net"] = round(retail_buy, 0) if retail_buy else None
             except Exception:
                 pass
     except Exception:
@@ -557,10 +595,7 @@ def enrich_signals(signals: list, trade_date: str) -> list:
             "price": price_cache.get(code, {}),
             "margin": margin_cache.get(code),
             "lhb": lhb.get("on_list", False),
-            "lhb_detail": {
-                "inst_net": lhb.get("inst_net"),
-                "retail_net": lhb.get("retail_net"),
-            } if lhb.get("on_list") else None,
+            "lhb_detail": {"inst_net": lhb.get("inst_net"), "retail_net": lhb.get("retail_net")} if lhb.get("on_list") else None,
             "pledge_risk": pledge_cache.get(code),
         }
 
@@ -613,11 +648,10 @@ def main():
     panda_ok = init_pandaai()
     if not panda_ok:
         if args.backtest or args.market_scan or args.verify:
-            logger.error("回测/验证功能需要 PandaAI 凭证。")
-            logger.info("cp .env.example .env 并填入手机号和密码即可。")
+            logger.error("PandaAI 未连接，请检查 .env 配置")
             sys.exit(1)
         else:
-            logger.info("PandaAI 未配置。运行 '--help' 查看认证方式。")
+            logger.info("PandaAI 未配置")
             return
 
     if args.backtest:
@@ -630,7 +664,6 @@ def main():
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
     else:
         print("未指定操作。可用: --verify / --market-scan / --backtest")
-        print(f"\n认证: cp .env.example .env 并填入手机号和密码。详见 https://www.pandaai.online/data-service")
 
 
 if __name__ == "__main__":
