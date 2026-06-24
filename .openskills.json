@@ -1,7 +1,7 @@
 {
   "name": "news-sentiment-analyst",
-  "version": "1.1.0",
-  "description": "A-share financial news sentiment analyst",
-  "author": "Theroix",
+  "version": "1.2.0",
+  "description": "A-share financial news sentiment analyst with optional PandaAI signal verification (backtest, margin, northbound, LHB)",
+  "author": "Erkan9527",
   "license": "Apache-2.0"
 }

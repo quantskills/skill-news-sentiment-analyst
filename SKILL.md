@@ -8,9 +8,10 @@ description: A-share financial news sentiment analyst. Collects news from 3 sour
 A 股财经新闻情感分析师 — 采集新闻 → 提取实体 → 生成 LLM prompt → 输出 Parquet
 
 ## 工具定位
-- 工具类型：数据采集 + 结构化输出
+- 工具类型：数据采集 + 结构化输出 + 可选信号验证
 - 解决问题：从多源财经新闻中提取结构化数据，生成分析师级 LLM prompt，供 Agent 进行情感分析和交易方向判断
 - 使用对象：agent / Alpha / 人工分析
+- 增强能力：配置 PandaAI 后可回测信号胜率、验证资金流向与新闻情绪的一致性
 
 ## 何时使用
 
@@ -137,6 +138,19 @@ Parquet 字段：trade_date, build_id, build_name, target_id, result_type, resul
 - `result_json.llm_score`：打分后的 LLM 评分结果
 
 详见 [references/api_guide.md](references/api_guide.md)
+
+## 第五步（可选）：PandaAI 交叉验证
+
+如果用户已配置 PandaAI（`.env` 中有凭证），可在输出信号后运行回测：
+
+```python
+from pandaai_integration import backtest
+
+# 批量回测 — 用实际股价验证每条信号的胜率
+backtest(pipeline['parquet_path'])
+```
+
+回测输出包括 confidence 分桶胜率对照表，帮助判断 LLM 的 confidence 是否真有预测力。
 
 ## 可被 Alpha 调用
 - 是

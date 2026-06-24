@@ -1,18 +1,15 @@
 # 📰 News Sentiment Analyst
 
-A 股财经新闻 → 结构化数据 → LLM 情感分析 → 交易方向判断
+A 股财经新闻 → 结构化数据 → LLM 情感分析 → 多维度交叉验证
 
-*English Version*
+[![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://www.python.org/)
+[![akshare](https://img.shields.io/badge/akshare-latest-green)](https://github.com/akfamily/akshare)
+[![pandas](https://img.shields.io/badge/pandas-latest-green)](https://pandas.pydata.org/)
+[![pyarrow](https://img.shields.io/badge/pyarrow-latest-green)](https://arrow.apache.org/)
+[![tests](https://img.shields.io/badge/tests-30%20passed-success)]()
+[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE.txt)
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
-![akshare](https://img.shields.io/badge/akshare-latest-green)
-![pandas](https://img.shields.io/badge/pandas-latest-green)
-![pyarrow](https://img.shields.io/badge/pyarrow-latest-green)
-![status](https://img.shields.io/badge/status-active-brightgreen)
-![tests](https://img.shields.io/badge/tests-30%20passed-success)
-![license](https://img.shields.io/badge/license-Apache%202.0-blue)
-
-[安装](#-安装)  |  [快速开始](#-快速开始)  |  [架构](#-架构)  |  [输出格式](#-输出格式)  |  [测试](#-测试)
+[安装](#-安装)  |  [快速开始](#-快速开始)  |  [架构](#-架构)  |  [信号验证](#-信号验证)  |  [测试](#-测试)
 
 ---
 
@@ -22,10 +19,15 @@ A 股财经新闻 → 结构化数据 → LLM 情感分析 → 交易方向判�
  东方财富(200)                           ┌──────────────┐
  富途牛牛(50)       ──→  提取实体  ──→   │  Parquet 输出  │  ──→  Agent + LLM  ──→  交易信号
  同花顺(20)            (股票/板块/实体)   │  (结构化数据)  │       (7步因果推理)
-                                         └──────────────┘
+                                         └──────┬───────┘
+                                                │
+                              ┌─────────────────▼─────────────────┐
+                              │  PandaAI 交叉验证（可选增强）       │
+                              │  价格回测 │ 融资融券 │ 北向 │ 龙虎榜 │
+                              └───────────────────────────────────┘
 ```
 
-**设计原则：** Skill 负责数据采集和结构化，AI 负责分析和决策。
+**设计原则：** Skill 负责数据采集和结构化，AI 负责分析和决策，PandaAI 负责信号验证。
 
 ---
 
@@ -64,9 +66,17 @@ A 股财经新闻 → 结构化数据 → LLM 情感分析 → 交易方向判�
 - 置信度过滤（默认 >= 0.5）
 - 按置信度降序排列
 
+### 🔬 信号验证（PandaAI 可选增强）
+- **价格回测：** 次日实际涨跌 vs LLM 预测方向
+- **资金流向：** 融资余额 + 北向资金是否同向
+- **内部人信号：** 业绩预告 / 回购 / 增减持
+- **游资动向：** 龙虎榜上榜情况
+
 ---
 
 ## 🚀 安装
+
+> 仓库本身即是 skill 目录 — clone 后直接复制到 Claude Code 的 skills 路径即可。
 
 ### 方式一：openskills（推荐）
 
@@ -75,16 +85,11 @@ npm install -g openskills
 openskills install quantskills/news-sentiment-analyst
 ```
 
-### 方式二：手动安装（全局）
+### 方式二：全局安装
 
 ```bash
 git clone https://github.com/quantskills/news-sentiment-analyst.git
-cd news-sentiment-analyst
-
-# 复制 skill 到 Claude Code 全局目录
-cp -r skills/news-sentiment-analyst ~/.claude/skills/news-sentiment-analyst
-
-# 安装 Python 依赖
+cp -r news-sentiment-analyst ~/.claude/skills/
 pip install -r ~/.claude/skills/news-sentiment-analyst/requirements.txt
 ```
 
@@ -92,23 +97,29 @@ pip install -r ~/.claude/skills/news-sentiment-analyst/requirements.txt
 
 ```bash
 git clone https://github.com/quantskills/news-sentiment-analyst.git
-cd news-sentiment-analyst
-
-# 复制 skill 到项目 .claude 目录
 mkdir -p .claude/skills
-cp -r skills/news-sentiment-analyst .claude/skills/
-
-# 安装 Python 依赖
+cp -r news-sentiment-analyst .claude/skills/
 pip install -r .claude/skills/news-sentiment-analyst/requirements.txt
 ```
 
 > ℹ️ 安装后重启 Claude Code，skill 将被自动发现。
 
+### PandaAI 增强（可选）
+
+```bash
+# 安装 SDK + 配置凭证
+pip install panda_data
+cp ~/.claude/skills/news-sentiment-analyst/.env.example ~/.claude/skills/news-sentiment-analyst/.env
+# 编辑 .env 填入手机号和密码
+```
+
+> Elite 套餐(¥153/月)含融资融券+北向资金+龙虎榜+财务数据。
+
 ### 验证安装
 
 ```bash
 ls ~/.claude/skills/news-sentiment-analyst/
-# 应显示：SKILL.md  scripts/  references/  ...
+# 应显示：SKILL.md  scripts/  references/  .env.example  ...
 
 cd ~/.claude/skills/news-sentiment-analyst/scripts
 python test.py
@@ -148,9 +159,11 @@ for item in pipeline["prompts"]:
     llm_response = "<LLM JSON response>"
     score = score_single_news(pipeline["parquet_path"], item["idx"], llm_response)
     print(f"  {item['news_title'][:30]}... → {score['sentiment']} {score['trading_direction']}")
-```
 
-> 👀 仅采集（不打分）
+# 3. 回测信号胜率（需配置 PandaAI）
+from pandaai_integration import backtest
+backtest(pipeline["parquet_path"])
+```
 
 ---
 
@@ -180,22 +193,35 @@ for item in pipeline["prompts"]:
 }
 ```
 
-> 👀 Few-shot 示例
-
 ---
 
 ## 🏗️ 架构
 
 ```
-┌─────────────────────────────────┐         ┌─────────────────────────────────┐
-│       Skill 层 (build.py)       │         │       Agent 层 (外部 AI)        │
-│                                 │         │                                 │
-│   🌐 采集 3 个数据源             │         │   🧠 读取 LLM prompt            │
-│   🔍 提取股票/板块/实体          │  Parquet │   📈 7步因果推理                 │
-│   📝 生成 FinGPT 风格 prompt     │ ──────► │   ✏️ 写回评分结果                │
-│   📦 输出结构化 Parquet          │         │   📊 输出交易信号                │
-│                                 │         │                                 │
-└─────────────────────────────────┘         └─────────────────────────────────┘
+┌─ AKShare (免费新闻) ────────────┐  ┌─ PandaAI (付费验证) ──────────┐
+│  stock_info_global_em()  200条  │  │  get_stock_daily()   日线回测  │
+│  stock_info_global_futu() 50条  │  │  get_margin()        融资融券  │
+│  stock_info_global_ths()  20条  │  │  get_hsgt_hold()     北向资金  │
+│  stock_board_industry_name_em() │  │  get_lhb_list()      龙虎榜    │
+└───────────┬─────────────────────┘  └────────────┬───────────────────┘
+            │                                     │
+            ▼                                     ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  build.py — 核心引擎                                                 │
+│  validate → collect → extract → structure → prompt → save → score   │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Agent 层 (Claude / LLM)                                            │
+│  读取 prompt → 7步CoT推理 → 写回评分 → generate_signal_list()       │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  pandaai_integration.py — 交叉验证                                   │
+│  verify_signal() → backtest() → confidence vs 实际胜率对照表         │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -220,14 +246,12 @@ output/news_trading_YYYY-MM-DD.parquet
 | `target_id` | | string | 股票代码或 板块_news_id |
 | `result_type` | ✓ | string | news_analysis / summary |
 | `result_value` | ✓ | string | pending_ai_analysis → data_ready |
-| `result_json` | | string | 完整新闻数据 + LLM prompt |
+| `result_json` | | string | 完整新闻数据 + LLM prompt + llm_score |
 | `source_data_date` | | string | 原始数据日期 |
 | `data_version` | ✓ | string | 1.0.0 |
 | `update_time` | ✓ | string | 结果生成时间 |
 
 ### 选股信号列表
-
-`generate_signal_list()` 从打分后的 Parquet 中提取交易信号：
 
 ```python
 from build import generate_signal_list
@@ -263,30 +287,85 @@ signals = generate_signal_list("output/news_trading_2026-05-30.parquet", min_con
 | `reason` | string | 分析理由（截断 80 字） |
 | `news_title` | string | 来源新闻标题（截断 30 字） |
 
-> 👀 result_json 完整结构
+---
+
+## 🔬 信号验证（PandaAI 增强）
+
+**解决核心问题：LLM 的 confidence 是自我感觉还是真有预测力？**
+
+### 4 维度交叉验证
+
+| 维度 | PandaAI 函数 | 验证什么 |
+|------|-------------|---------|
+| 价格 | `get_stock_daily` | LLM 说 bullish，次日真的涨了吗？ |
+| 资金 | `get_margin` / `get_hsgt_hold` | 杠杆资金和北向是否同向？ |
+| 内部人 | `get_fina_forecast` / `get_repurchase` | 有业绩预告/回购/增减持支撑吗？ |
+| 游资 | `get_lhb_list` | 龙虎榜上榜了吗？ |
+
+### 使用
+
+```bash
+# 配置凭证
+cp .env.example .env
+# 编辑 .env 填入手机号和密码
+
+# 单股验证
+python scripts/pandaai_integration.py --verify --symbol 000001.SZ --date 2026-06-25
+
+# 市场全景
+python scripts/pandaai_integration.py --market-scan --date 2026-06-25
+
+# 批量回测
+python scripts/pandaai_integration.py --backtest output/news_trading_2026-06-25.parquet
+```
+
+### 回测输出示例
+
+```
+================================================================
+  回 测 结 果
+================================================================
+  信号总数: 45
+  整体胜率: 53.3%
+
+     bullish:   28 条  胜率 50.0%
+     bearish:   17 条  胜率 58.8%
+
+  confidence 分桶:
+  [0.8-1.0):   12 条  胜率 58.3%  ███████████
+  [0.5-0.8):   22 条  胜率 54.5%  ██████████
+  [0.2-0.5):    8 条  胜率 37.5%  ███████
+  [0.0-0.2):    3 条  胜率 66.7%  █████████████
+================================================================
+```
+
+> `.env` 已加入 `.gitignore`，不会被提交。详细 API 列表见 [pandaai_api_list.md](references/pandaai_api_list.md)。
 
 ---
 
 ## 🗃️ 项目结构
 
 ```
-.
-├── README.md               ← 中文版
-├── README_EN.md            ← 英文版
+news-sentiment-analyst/
+├── SKILL.md                       ← Claude Code skill 定义（必需）
+├── README.md                      ← 项目文档
+├── SUMMARY.md                     ← 设计评审与质量分析
+├── LICENSE.txt                    ← Apache 2.0 许可证
+├── .openskills.json               ← openskills 元数据
+├── .env.example                   ← PandaAI 凭证模板（.env 已 gitignore）
 ├── .gitignore
-└── skills/
-    └── news-sentiment-analyst/
-        ├── SKILL.md               ← Claude Code skill 定义（必需）
-        ├── LICENSE.txt            ← Apache 2.0 许可证
-        ├── .openskills.json       ← openskills 元数据
-        ├── requirements.txt       ← Python 依赖
-        ├── scripts/
-        │   ├── build.py           ← 主脚本：采集 + 提取 + 结构化 + Parquet
-        │   ├── sentiment.py       ← LLM prompt 生成 + 响应解析
-        │   └── test.py            ← 测试脚本（30 个测试用例）
-        └── references/
-            ├── api_guide.md       ← API 文档
-            └── data_sources.md    ← AKShare 数据源说明
+├── requirements.txt               ← Python 依赖
+├── scripts/
+│   ├── build.py                   ← 核心引擎：采集 + 提取 + 结构化 + Parquet
+│   ├── sentiment.py               ← LLM prompt 生成 + 响应解析
+│   ├── auth.py                    ← PandaAI 凭证管理
+│   ├── pandaai_integration.py     ← 交叉验证 + 批量回测引擎
+│   └── test.py                    ← 测试脚本（30 个用例）
+├── references/
+│   ├── api_guide.md               ← API 调用文档
+│   ├── data_sources.md            ← AKShare 数据源说明
+│   └── pandaai_api_list.md       ← PandaAI 完整 API 目录
+└── output/                         ← Parquet 输出（已 gitignore）
 ```
 
 ---
@@ -294,7 +373,7 @@ signals = generate_signal_list("output/news_trading_2026-05-30.parquet", min_con
 ## 🧪 测试
 
 ```bash
-cd skills/news-sentiment-analyst/scripts
+cd scripts
 python test.py
 ```
 
@@ -320,7 +399,7 @@ python test.py
 | `test_agent_call` | run() 标准入口 |
 | `test_full_flow` | 端到端流水线 |
 | `test_llm_prompt_generation` | CoT 引导 + few-shot + JSON 格式 |
-| `test_llm_response_parsing` | 标准 JSON / markdown 代码块 / 混合文本 / 无效输入 / 字段标准化 |
+| `test_llm_response_parsing` | 标准 JSON / markdown / 混合文本 / 无效输入 / 字段标准化 |
 
 ---
 
@@ -340,37 +419,22 @@ python test.py
 
 ### 新闻采集（AKShare — 免费，无需注册）
 
-| 数据源 | API | 条数 | 特点 |
-|--------|-----|------|------|
-| 东方财富 | `ak.stock_info_global_em()` | 200 | 全球快讯，覆盖广 |
-| 富途牛牛 | `ak.stock_info_global_futu()` | 50 | 港美股视角 |
-| 同花顺 | `ak.stock_info_global_ths()` | 20 | 实时直播，时效性强 |
+| 数据源 | API | 条数 |
+|--------|-----|:----:|
+| 东方财富 | `ak.stock_info_global_em()` | 200 |
+| 富途牛牛 | `ak.stock_info_global_futu()` | 50 |
+| 同花顺 | `ak.stock_info_global_ths()` | 20 |
 
-> ℹ️ 使用 AKShare 开源 API，无需注册。详见 [data_sources.md](references/data_sources.md)。
+详见 [data_sources.md](references/data_sources.md)。
 
-### 信号验证（PandaAI — 可选增强）
+### 信号验证（PandaAI — 可选付费）
 
-**解决核心问题：LLM 的 confidence 是自我感觉还是真有预测力？**
+| 套餐 | 月费 | 包含数据 |
+|------|:----:|------|
+| Pro | ¥63 | A股日线 + 指数 + 公司行为 |
+| Elite | ¥153 | 含融资融券 + 北向 + 龙虎榜 + 财务 |
 
-配置 PandaAI 后，可以验证每条新闻信号的 4 个维度：
-
-| 维度 | PandaAI 函数 | 验证什么 |
-|------|-------------|---------|
-| 价格 | `get_stock_daily` | LLM 说 bullish，次日真的涨了吗？ |
-| 资金 | `get_margin` / `get_hsgt_hold` | 杠杆资金和北向是否同向？ |
-| 内部人 | `get_fina_forecast` / `get_repurchase` | 有业绩预告/回购/增减持支撑吗？ |
-| 游资 | `get_lhb_list` | 龙虎榜上榜了吗？ |
-
-```bash
-# 配置凭证
-cp .env.example .env
-# 编辑 .env 填入手机号和密码
-
-# 运行回测
-python scripts/pandaai_integration.py --backtest output/news_trading_2026-06-25.parquet
-```
-
-> `.env` 已加入 `.gitignore`，不会被提交。推荐 Elite 套餐(¥153/月)。详见 [pandaai_api_list.md](references/pandaai_api_list.md)。
+详见 [pandaai_api_list.md](references/pandaai_api_list.md)。
 
 ---
 
@@ -379,10 +443,12 @@ python scripts/pandaai_integration.py --backtest output/news_trading_2026-06-25.
 - AKShare 接口有频率限制，建议请求间隔 1-2 秒
 - 新闻为实时快照，不支持历史数据
 - 按标题自动去重，跨源同一条新闻只保留一条
-- 市场背景自动采集（大盘指数、板块涨跌）
+- 市场背景自动采集（免费数据来自 AKShare，增强数据来自 PandaAI）
 - 关联新闻自动匹配（同板块或同股票的其他新闻）
+- PandaAI 为可选增强，未配置时不影响核心新闻采集
+- `.env` 文件已加入 `.gitignore`，凭证不会被提交
 
-> **免责声明：** 本项目不构成任何形式的证券投资咨询或建议。项目所有输出，包括但不限于任何交易方向、标的筛选，仅为算法逻辑的示例性展示，不代表任何投资建议或承诺。明确反对使用者将本项目输出用于真实交易。任何使用者因参考本项目代码、逻辑或示例输出而进行真实交易，必须自行承担由此产生的全部盈亏和法律风险。作者的实盘操作与任何公开的代码及示例无关。本项目不提供任何形式的实时信号推送服务，不建立任何投资交流群组。
+> **免责声明：** 本项目不构成任何形式的证券投资咨询或建议。项目所有输出，包括但不限于任何交易方向、标的筛选，仅为算法逻辑的示例性展示，不代表任何投资建议或承诺。明确反对使用者将本项目输出用于真实交易。任何使用者因参考本项目代码、逻辑或示例输出而进行真实交易，必须自行承担由此产生的全部盈亏和法律风险。本项目的作者的实盘操作与任何公开的代码及示例无关。本项目不提供任何形式的实时信号推送服务，不建立任何投资交流群组。
 
 ---
 
