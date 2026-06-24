@@ -72,13 +72,13 @@ A 股财经新闻 → 结构化数据 → LLM 情感分析 → 交易方向判�
 
 ```bash
 npm install -g openskills
-openskills install <your-username>/news-sentiment-analyst
+openskills install quantskills/news-sentiment-analyst
 ```
 
 ### 方式二：手动安装（全局）
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/quantskills/news-sentiment-analyst.git
 cd news-sentiment-analyst
 
 # 复制 skill 到 Claude Code 全局目录
@@ -91,7 +91,7 @@ pip install -r ~/.claude/skills/news-sentiment-analyst/requirements.txt
 ### 方式三：项目级安装
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/quantskills/news-sentiment-analyst.git
 cd news-sentiment-analyst
 
 # 复制 skill 到项目 .claude 目录
