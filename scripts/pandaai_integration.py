@@ -337,6 +337,93 @@ def backtest(parquet_path: str, lookahead: int = 1) -> pd.DataFrame:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 信号增强 — 嵌入主流程，每条信号自动拉 PandaAI 验证
+# ═══════════════════════════════════════════════════════════════
+
+def enrich_signals(signals: list, trade_date: str) -> list:
+    """
+    对 generate_signal_list() 的输出逐条拉 PandaAI 数据验证。
+
+    每条信号新增字段:
+      verify_price   — 最近5日涨跌幅
+      verify_margin  — 融资余额变化方向
+      verify_lhb     — 当日是否上榜龙虎榜
+    """
+    if not signals:
+        return signals
+
+    try:
+        from auth import init_pandaai, is_panda_available
+        if not is_panda_available() and not init_pandaai(verbose=False):
+            return signals
+    except Exception:
+        return signals
+
+    import panda_data
+
+    # 收集所有股票代码，去重
+    codes = list({s["code"] for s in signals if s.get("code")})
+
+    # 批量查价格（最近5天）
+    price_cache = {}
+    for code in codes:
+        try:
+            end = trade_date
+            start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+            sym = _format_symbol(code)
+            px = panda_data.get_stock_daily(
+                symbol=sym, start_date=start, end_date=end,
+                fields=["close"], adjust="pre",
+            )
+            if px:
+                closes = [x.get("close", 0) for x in px if x.get("close")]
+                if len(closes) >= 2:
+                    chg = round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)
+                    chg5 = round((closes[-1] - closes[0]) / closes[0] * 100, 2) if len(closes) >= 5 else None
+                    price_cache[code] = {"latest_change_pct": chg, "5d_change_pct": chg5}
+        except Exception:
+            pass
+
+    # 批量查融资
+    margin_cache = {}
+    for code in codes:
+        try:
+            end = trade_date
+            start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y-%m-%d")
+            sym = _format_symbol(code)
+            mg = panda_data.get_margin(symbol=sym, start_date=start, end_date=end)
+            if mg and len(mg) >= 2:
+                a = mg[0].get("margin_balance", 0) or 0
+                b = mg[-1].get("margin_balance", 0) or 0
+                margin_cache[code] = "up" if b > a else "down"
+        except Exception:
+            pass
+
+    # 龙虎榜
+    lhb_codes = set()
+    try:
+        lhb = panda_data.get_lhb_list(trade_date=trade_date)
+        if lhb:
+            for item in lhb:
+                sym = str(item.get("symbol", ""))
+                if len(sym) >= 6:
+                    lhb_codes.add(sym[-6:])
+    except Exception:
+        pass
+
+    # 写入每条信号
+    for s in signals:
+        code = s.get("code", "")
+        s["verify"] = {
+            "price": price_cache.get(code, {}),
+            "margin": margin_cache.get(code),
+            "lhb": code in lhb_codes,
+        }
+
+    return signals
+
+
+# ═══════════════════════════════════════════════════════════════
 # 市场扫描
 # ═══════════════════════════════════════════════════════════════
 

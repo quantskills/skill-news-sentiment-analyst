@@ -86,25 +86,30 @@ for item in pipeline["prompts"]:
     print(f"  {item['news_title'][:30]}... → {score['sentiment']} {score['trading_direction']} conf={score['confidence']}")
 ```
 
-### 第四步：输出选股信号
-
-执行以下代码，将输出**原样展示给用户**，不要修改格式，不要添加额外解读：
+### 第四步：输出选股信号 + PandaAI 验证
 
 ```python
 from build import generate_signal_list
+from pandaai_integration import enrich_signals
 
 signals = generate_signal_list(pipeline['parquet_path'], min_confidence=0.5)
+signals = enrich_signals(signals, today)
 
 print(f"## {today} 选股信号列表\n")
-print(f"| 股票代码 | 公司名称 | 方向 | 置信度 | 来源新闻 |")
-print(f"|----------|----------|------|--------|----------|")
+print(f"| 股票代码 | 公司名称 | 方向 | 置信度 | 近1日涨跌 | 融资 | 龙虎榜 | 来源新闻 |")
+print(f"|----------|----------|------|--------|-----------|------|--------|----------|")
 for s in signals:
     mark = "🟢买入" if s["direction"] == "bullish" else "🔴卖出"
-    print(f"| {s['code']} | {s['name']} | {mark} | {s['confidence']:.2f} | {s['news_title']} |")
+    v = s.get("verify", {})
+    px = v.get("price", {})
+    price_str = f"{px.get('latest_change_pct', 'N/A')}%"
+    margin_str = v.get("margin", "N/A") or "N/A"
+    lhb_str = "🔥" if v.get("lhb") else ""
+    print(f"| {s['code']} | {s['name']} | {mark} | {s['confidence']:.2f} | {price_str} | {margin_str} | {lhb_str} | {s['news_title']} |")
 print(f"\n共 {len(signals)} 个信号（置信度 >= 0.5）")
 ```
 
-> 仅在信号列表为空时，可额外说明"当日无高置信度交易信号"。
+PandaAI 未配置时 `enrich_signals()` 原样返回，验证列显示 N/A。
 
 ## LLM 分析框架（7 步因果推理）
 
@@ -138,17 +143,6 @@ Parquet 字段：trade_date, build_id, build_name, target_id, result_type, resul
 - `result_json.llm_score`：打分后的 LLM 评分结果
 
 详见 [references/api_guide.md](references/api_guide.md)
-
-## 第五步：PandaAI 交叉验证
-
-```python
-from pandaai_integration import backtest
-
-# 用实际股价验证信号胜率
-backtest(pipeline['parquet_path'])
-```
-
-回测输出 confidence 分桶胜率对照表。
 
 ## 可被 Alpha 调用
 - 是
