@@ -79,6 +79,7 @@ def generate_llm_prompt(
     entities: Optional[Dict] = None,
     market_context: Optional[str] = None,
     related_news: Optional[List[str]] = None,
+    stock_context: Optional[Dict] = None,
 ) -> str:
     stock_str = (
         ", ".join([f"{s.get('name', '')}({s.get('code', '')})" for s in stock_codes])
@@ -98,6 +99,23 @@ def generate_llm_prompt(
         entity_parts.append(f"事件类型: {', '.join(entities['events'][:3])}")
     entity_str = "; ".join(entity_parts) if entity_parts else "无"
 
+    # PandaAI 股票上下文: 价格、融资、行业
+    stock_ctx_section = ""
+    if stock_context:
+        lines = []
+        for code, ctx in stock_context.items():
+            parts = [code]
+            if ctx.get("price"):
+                px = ctx["price"]
+                parts.append(f"现价{px.get('latest')} 近1日{px.get('change_1d')}% 近5日{px.get('change_5d')}%")
+            if ctx.get("margin"):
+                parts.append(f"融资{'增' if ctx['margin'] == 'up' else '减'}")
+            if ctx.get("industry"):
+                parts.append(f"行业: {ctx['industry']}")
+            lines.append("  " + " | ".join(parts))
+        if lines:
+            stock_ctx_section = "\n【涉及股票实时行情（来自 PandaAI）】\n" + "\n".join(lines) + "\n"
+
     context_section = ""
     if market_context:
         context_section = f"\n【当日市场背景】\n{market_context}\n"
@@ -110,7 +128,7 @@ def generate_llm_prompt(
     return f"""{SYSTEM_PROMPT}
 
 {FEW_SHOT_EXAMPLES}
-{context_section}{related_section}
+{stock_ctx_section}{context_section}{related_section}
 【待分析新闻】
 标题：{title}
 内容：{content[:500]}

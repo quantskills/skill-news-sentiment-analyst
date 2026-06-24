@@ -274,30 +274,46 @@ def extract_key_entities(text: str) -> Dict:
 
 
 def collect_market_context(trade_date: str) -> str:
-    """采集市场背景：AKShare 行情 + PandaAI 北向/龙虎榜"""
+    """
+    采集市场背景 — PandaAI 为主，AKShare 为备用。
+
+    PandaAI 提供: 上证/创业板指数、北向资金、龙虎榜统计
+    AKShare 提供: 板块涨幅（PandaAI 没有的维度）
+    """
     context_parts = []
 
-    # ── AKShare 基础数据（始终可用）────────────────────────
+    # ── PandaAI 市场快照（主数据源）────────────────────────
+    panda_snapshot = None
     try:
-        df_index = ak.stock_zh_index_daily_em(symbol="sh000001")
-        if not df_index.empty:
-            latest = df_index.iloc[-1]
-            close = latest.get("close", 0)
-            change_pct = latest.get("涨跌幅", 0)
-            context_parts.append(f"上证指数: {close}点, 涨跌幅{change_pct}%")
-    except Exception as e:
-        logger.warning(f"获取上证指数失败: {e}")
+        from pandaai_integration import get_market_snapshot
+        panda_snapshot = get_market_snapshot(trade_date)
+    except Exception:
+        pass
 
-    try:
-        df_cy = ak.stock_zh_index_daily_em(symbol="sz399006")
-        if not df_cy.empty:
-            latest = df_cy.iloc[-1]
-            close = latest.get("close", 0)
-            change_pct = latest.get("涨跌幅", 0)
-            context_parts.append(f"创业板指: {close}点, 涨跌幅{change_pct}%")
-    except Exception as e:
-        logger.warning(f"获取创业板指失败: {e}")
+    if panda_snapshot and panda_snapshot.get("available"):
+        ind = panda_snapshot.get("indices", {})
+        if ind.get("sh"):
+            sh = ind["sh"]
+            context_parts.append(f"上证指数: {sh.get('close')}点, 涨跌幅{sh.get('pct_change', 'N/A')}%")
+        if ind.get("cy"):
+            cy = ind["cy"]
+            context_parts.append(f"创业板指: {cy.get('close')}点, 涨跌幅{cy.get('pct_change', 'N/A')}%")
 
+        nb = panda_snapshot.get("northbound")
+        if nb is not None:
+            context_parts.append(f"北向资金: {nb} 条记录")
+
+        lhb_count = panda_snapshot.get("lhb_count", 0)
+        if lhb_count > 0:
+            context_parts.append(f"龙虎榜: {lhb_count} 只股票上榜")
+
+        logger.info("市场背景来自 PandaAI")
+    else:
+        # ── AKShare 回退 ──
+        _akshare_market_context(context_parts)
+        logger.info("市场背景来自 AKShare（PandaAI 未配置）")
+
+    # ── 板块涨幅（AKShare，PandaAI 无此维度）──────────────
     try:
         df_sector = ak.stock_board_industry_name_em()
         if not df_sector.empty:
@@ -313,53 +329,30 @@ def collect_market_context(trade_date: str) -> str:
     except Exception as e:
         logger.warning(f"获取板块数据失败: {e}")
 
-    # ── PandaAI 市场数据 ──
-    _panda_enhance_market_context(context_parts, trade_date)
-
     return "; ".join(context_parts) if context_parts else "市场背景数据暂不可用"
 
 
-def _panda_enhance_market_context(context_parts: list, trade_date: str) -> None:
-    """从 PandaAI 获取北向资金、龙虎榜数据补充市场背景"""
+def _akshare_market_context(context_parts: list) -> None:
+    """AKShare 指数数据（PandaAI 不可用时的回退）"""
     try:
-        from auth import init_pandaai, is_panda_available
-        if not is_panda_available():
-            if not init_pandaai(verbose=False):
-                return
-
-        import panda_data
-
-        # 北向资金
-        try:
-            hsgt = panda_data.get_hsgt_hold(
-                start_date=trade_date, end_date=trade_date
-            )
-            if isinstance(hsgt, list) and hsgt:
-                context_parts.append(f"北向资金: {hsgt[-1] if isinstance(hsgt[-1], dict) else '可用'}")
-            elif hasattr(hsgt, '__len__') and len(hsgt) > 0:
-                context_parts.append(f"北向资金: {len(hsgt)} 条记录")
-        except Exception:
-            pass  # 静默降级 — 北向不是必需的
-
-        # 龙虎榜概览
-        try:
-            lhb = panda_data.get_lhb_list(trade_date=trade_date)
-            count = len(lhb) if hasattr(lhb, '__len__') else 0
-            if count > 0:
-                context_parts.append(f"龙虎榜: {count} 只股票上榜")
-        except Exception:
-            pass
-
-        logger.info("已获取 PandaAI 市场数据（北向+龙虎榜）")
-
-    except ImportError:
-        pass  # PandaAI 未安装
-    except Exception as e:
-        logger.debug(f"PandaAI 数据获取失败: {e}")
+        df_index = ak.stock_zh_index_daily_em(symbol="sh000001")
+        if not df_index.empty:
+            latest = df_index.iloc[-1]
+            context_parts.append(f"上证指数: {latest.get('close', 0)}点, 涨跌幅{latest.get('涨跌幅', 0)}%")
+    except Exception:
+        pass
+    try:
+        df_cy = ak.stock_zh_index_daily_em(symbol="sz399006")
+        if not df_cy.empty:
+            latest = df_cy.iloc[-1]
+            context_parts.append(f"创业板指: {latest.get('close', 0)}点, 涨跌幅{latest.get('涨跌幅', 0)}%")
+    except Exception:
+        pass
 
 
 def structure_news_for_ai(news: Dict, all_news_titles: Optional[List[str]] = None,
-                          market_context: Optional[str] = None) -> Dict:
+                          market_context: Optional[str] = None,
+                          trade_date: Optional[str] = None) -> Dict:
     title = news.get("news_title", "")
     content = news.get("news_content", "")
     full_text = f"{title} {content}"
@@ -367,6 +360,24 @@ def structure_news_for_ai(news: Dict, all_news_titles: Optional[List[str]] = Non
     stock_codes = extract_stock_codes_from_text(full_text)
     sectors = extract_sectors_from_text(full_text)
     entities = extract_key_entities(full_text)
+
+    # PandaAI 股票上下文（价格、融资、行业）
+    stock_context = {}
+    if trade_date:
+        try:
+            codes = [s["code"] for s in stock_codes if s.get("code")]
+            if codes:
+                from pandaai_integration import get_stock_context_batch
+                stock_context = get_stock_context_batch(codes, trade_date)
+        except Exception:
+            pass
+
+    # PandaAI 行业分类增强板块识别
+    if stock_context:
+        for code, ctx in stock_context.items():
+            industry = ctx.get("industry")
+            if industry and industry not in sectors:
+                sectors.append(industry)
 
     related_news = []
     if all_news_titles:
@@ -391,12 +402,14 @@ def structure_news_for_ai(news: Dict, all_news_titles: Optional[List[str]] = Non
         "extracted_data": {
             "stock_codes": stock_codes,
             "sectors": sectors,
-            "entities": entities
+            "entities": entities,
+            "stock_context": stock_context,
         },
         "ai_analysis_prompt": generate_llm_prompt(
             title, content, stock_codes, sectors, entities,
             market_context=market_context,
-            related_news=related_news
+            related_news=related_news,
+            stock_context=stock_context,
         )
     }
 
@@ -523,7 +536,7 @@ def run(input_data: Dict, config: Optional[Dict] = None) -> Dict:
     all_titles = [n.get("news_title", "") for n in news_list]
     structured_news = []
     for news in news_list:
-        structured = structure_news_for_ai(news, all_titles, market_context)
+        structured = structure_news_for_ai(news, all_titles, market_context, trade_date)
         structured_news.append(structured)
 
     all_stock_codes = set()
