@@ -29,18 +29,39 @@ Parquet 文件默认输出到 `output/` 目录，文件名格式：`news_trading
 
 当你触发此 skill 时，严格按以下步骤执行：
 
-### 第一步：采集新闻 + 市场背景 + 生成 prompt
+### 第〇步：检查 PandaAI 配置（首次使用）
 
 ```python
-import sys, os, json
-
+import sys, os
 skill_dir = os.path.expanduser("~/.claude/skills/news-sentiment-analyst/scripts")
 if not os.path.exists(skill_dir):
     skill_dir = os.path.join(os.getcwd(), ".claude/skills/news-sentiment-analyst/scripts")
-if not os.path.exists(skill_dir):
-    skill_dir = os.path.join(os.path.dirname(__file__), "scripts")
 sys.path.insert(0, skill_dir)
 
+from auth import init_pandaai
+
+panda_ok = init_pandaai(verbose=False)
+```
+
+如果 `panda_ok` 为 False，向用户说明：
+
+> PandaAI 未配置。配置后可以获取实时股价、融资、北向资金、龙虎榜数据来验证新闻信号。请提供你在 pandaai.online 的手机号和密码，我会写入 .env（该文件不会提交到 GitHub）。
+
+用户提供手机号和密码后，执行：
+
+```python
+env_path = os.path.join(os.path.dirname(skill_dir), ".env")
+with open(env_path, "w") as f:
+    f.write(f"PANDA_DATA_USERNAME={phone}\nPANDA_DATA_PASSWORD={password}\n")
+# 重新初始化
+init_pandaai()
+```
+
+> 用户拒绝或跳过时，直接继续第一步（使用 AKShare 回退数据）。
+
+### 第一步：采集新闻 + 市场背景 + 生成 prompt
+
+```python
 from build import run_full_pipeline
 from datetime import date
 
