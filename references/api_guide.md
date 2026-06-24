@@ -59,20 +59,30 @@ domain_map = {
 - `news_id` / `news_title` / `news_source` / `publish_time`
 - `news_type`（macro/industry/company）
 - `stock_codes`：提取的股票代码列表
-- `sectors`：匹配的板块列表
+- `sectors`：匹配的板块列表（关键词 + PandaAI 行业分类补充）
 - `entities`：关键实体（数字/日期/政策/事件）
-- `ai_analysis_prompt`：FinGPT 风格 LLM prompt
+- `stock_context`：PandaAI 实时数据（价格/融资/行业/质押/筹码/财务）
+- `ai_analysis_prompt`：数据感知 LLM prompt
+- `llm_score`：打分后的 LLM 评分（sentiment/impact/direction/confidence/reason）
 
 ## LLM Prompt 设计
 
 ### 结构
 
 ```
-System: 15年经验的A股量化金融分析师
-Analysis Framework: 7步因果推理（核心事件/传导路径/时效性/确定性/市场背景/交叉关联/反直觉检查）
-Confidence标准: 0.8-1.0 / 0.5-0.8 / 0.2-0.5 / 0.0-0.2
-Few-shot: 4个示例（利好/利空/中性/反直觉，含CoT推理）
-News: 待分析新闻（标题+内容+股票+板块+实体）
+System: 15年经验的A股量化金融分析师 — 数据感知分析框架
+Analysis Framework: 7步数据感知推理
+  1. 核心事件识别
+  2. 传导路径分析
+  3. 数据交叉验证 ← 关键步骤（价格/融资/质押/筹码/财务）
+  4. 时效性判断
+  5. 确定性评估
+  6. 市场背景关联
+  7. 反直觉检查
+Confidence: 与数据支撑程度挂钩（0.8+需数据全面支撑）
+Stock Context: 实时行情/融资方向/行业分类/质押比例/筹码趋势/财务快报
+Few-shot: 4个数据感知示例（含数据支撑+数据矛盾场景）
+News: 待分析新闻
 Output: JSON（sentiment/impact/direction/confidence/reason）
 ```
 

@@ -57,16 +57,16 @@
 
 | 文件 | 行数 | 职责 |
 |------|:----:|------|
-| `scripts/build.py` | 700 | 核心引擎：采集、提取、结构化、Parquet 读写、信号生成、市场背景 |
-| `scripts/sentiment.py` | 202 | LLM prompt 生成（含 4 Few-shot + 7步CoT）+ 响应解析（4格式降级） |
-| `scripts/auth.py` | 124 | PandaAI 凭证管理：`.env` 加载 → `panda_data.init_token()` |
-| `scripts/pandaai_integration.py` | 399 | 交叉验证引擎：verify_signal / backtest / market_scan |
+| `scripts/build.py` | 713 | 核心引擎：采集→提取→PandaAI增强→结构化→Parquet→信号生成 |
+| `scripts/sentiment.py` | 226 | 数据感知 LLM prompt（7步CoT含数据交叉验证 + 4 Few-shot）+ 响应解析 |
+| `scripts/auth.py` | 124 | PandaAI 凭证管理：`.env` → `panda_data.init_token(phone, pw)` |
+| `scripts/pandaai_integration.py` | 637 | PandaAI 全功能：市场快照/股票上下文/信号增强/回测引擎 (16个API) |
 | `scripts/test.py` | 470 | 10 模块测试，覆盖输入校验到 LLM 解析全链路 |
-| `SKILL.md` | ~195 | Claude Code skill 定义：5 步执行流程 |
-| `README.md` | ~350 | 完整项目文档：安装 / 快速开始 / 架构 / 验证 / 测试 |
-| `references/api_guide.md` | 171 | API 调用示例、字段说明、选股信号接口 |
-| `references/data_sources.md` | 66 | AKShare 接口速查 |
-| `references/pandaai_api_list.md` | 148 | PandaAI 80+ 函数完整目录 + 相关性标注 |
+| `SKILL.md` | 215 | Claude Code skill 定义：第〇步(PandaAI配置引导) + 4步执行流程 |
+| `README.md` | 453 | 完整项目文档 |
+| `references/api_guide.md` | 171 | API 调用示例、字段说明 |
+| `references/data_sources.md` | 65 | AKShare 接口速查 |
+| `references/pandaai_api_list.md` | 147 | PandaAI 80+ 函数完整目录 |
 
 ---
 
@@ -76,7 +76,7 @@
 AKShare（免费采集） → Skill（结构化） → PandaAI（付费验证），每层独立可替换。
 
 ### 2. LLM Prompt 工程
-7 步 CoT + 4 Few-shot（利好/利空/中性/反直觉），置信度 4 档标准。
+数据感知 7 步 CoT（含数据交叉验证步骤）+ 4 个数据感知 Few-shot。每步推理必须对照 PandaAI 实时数据（价格/融资/质押/筹码/财务），而非纯文本分析。置信度 4 档标准与数据支撑程度挂钩。
 
 ### 3. LLM 响应解析鲁棒性
 `parse_llm_response()` 支持 4 种格式降级：纯 JSON → markdown 代码块 → 混合文本提取 → 安全默认值。字段值自动标准化。
@@ -155,8 +155,13 @@ market_scan(trade_date) → 指数+北向+龙虎榜全景
 
 ## 总结
 
-**v1.2 — 从"新闻打分工具"升级为"信号验证平台"。**
+**v1.2 — 数据感知的 A 股新闻分析 Skill。**
 
-核心改进：增加了 PandaAI 交叉验证层，解决了原始设计中"LLM confidence 无法验证"的根本缺陷。`backtest()` 函数用实际股价逐条对照信号，输出 confidence 分桶胜率 — 用户可以直接看到 LLM 的 0.85 到底值多少钱。
+PandaAI 贯穿全链路：
+- **市场背景**：指数/北向/龙虎榜（PandaAI 主，AKShare 回退）
+- **LLM Prompt**：每条新闻注入涉及股票的价格/融资/质押/筹码/财务实时数据
+- **推理框架**：第 3 步"数据交叉验证"强制 LLM 对照实际盘面做判断
+- **信号输出**：每条信号附带价格涨跌/融资方向/质押风险/龙虎榜明细
+- **回测引擎**：`backtest()` 用历史股价验证 confidence 是否真有预测力
 
-架构保持三层解耦：免费采集（AKShare）→ 结构化 + LLM 推理（Skill）→ 付费验证（PandaAI）。每一层可独立使用或替换。
+三层架构：AKShare(新闻采集) → Skill(结构化+数据感知推理) → PandaAI(16个API驱动全链路验证)。

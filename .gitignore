@@ -8,6 +8,7 @@ venv/
 dist/
 
 # Parquet output data
+*.parquet
 scripts/output/
 scripts/test_output/
 
@@ -17,6 +18,11 @@ scripts/test_output/
 
 # Credentials (DO NOT COMMIT)
 .env
+
+# Playwright temp files
+.playwright-mcp/
+*-api-docs*.md
+*-login.png
 
 # OS
 .DS_Store
