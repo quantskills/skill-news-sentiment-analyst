@@ -313,7 +313,7 @@ def collect_market_context(trade_date: str) -> str:
     except Exception as e:
         logger.warning(f"获取板块数据失败: {e}")
 
-    # ── PandaAI 增强数据（可选，需配置 PANDA_DATA_TOKEN）──
+    # ── PandaAI 增强数据（可选，需配置 .env）──
     _panda_enhance_market_context(context_parts, trade_date)
 
     return "; ".join(context_parts) if context_parts else "市场背景数据暂不可用"

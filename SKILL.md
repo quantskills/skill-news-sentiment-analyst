@@ -165,21 +165,21 @@ Parquet 字段：trade_date, build_id, build_name, target_id, result_type, resul
 # 1. 安装 SDK
 pip install panda_data
 
-# 2. 设置凭证（选一种）
-#    方式A: 环境变量（推荐 — 临时有效，不写磁盘）
-export PANDA_DATA_TOKEN="your-token-from-pandaai"
-
-#    方式B: .env 文件（持久化，已 gitignore）
+# 2. 配置凭证
 cp .env.example .env
-# 编辑 .env 填入 PANDA_DATA_TOKEN=xxx
+# 编辑 .env 填入:
+#   PANDA_DATA_USERNAME=86你的手机号
+#   PANDA_DATA_PASSWORD=你的密码
 
 # 3. 验证连接
 python scripts/pandaai_integration.py --market-scan
 ```
 
+> Elite 套餐(¥153/月)含融资融券+北向资金+龙虎榜+财务数据，适合完整验证流程。
+
 **未配置时不影响核心新闻采集**，只是增强功能（回测、资金流验证、内部人信号）不会启用。
 
-> 获取凭证: https://www.pandaai.online/data-service
+> 注册订阅: https://www.pandaai.online/data-service
 
 ## 注意事项
 

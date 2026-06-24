@@ -362,16 +362,15 @@ python test.py
 | 游资 | `get_lhb_list` | 龙虎榜上榜了吗？ |
 
 ```bash
-# 快速配置
+# 配置凭证
 cp .env.example .env
-# 编辑 .env 填入 PANDA_DATA_TOKEN=xxx
-# 或: export PANDA_DATA_TOKEN="xxx"
+# 编辑 .env 填入手机号和密码
 
 # 运行回测
 python scripts/pandaai_integration.py --backtest output/news_trading_2026-06-25.parquet
 ```
 
-> `.env` 已加入 `.gitignore`，不会被提交。详见 [pandaai_api_list.md](references/pandaai_api_list.md)。
+> `.env` 已加入 `.gitignore`，不会被提交。推荐 Elite 套餐(¥153/月)。详见 [pandaai_api_list.md](references/pandaai_api_list.md)。
 
 ---
 

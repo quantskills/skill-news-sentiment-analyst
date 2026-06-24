@@ -1,10 +1,8 @@
 """
 PandaAI 数据服务 — 新闻信号交叉验证引擎
 
-依赖: panda_data SDK（pip install panda_data）
-
-认证: export PANDA_DATA_TOKEN="xxx"
-      或 cp .env.example .env 并填入凭证
+认证: cp .env.example .env 并填入手机号和密码
+      或 export PANDA_DATA_USERNAME=86xxx PANDA_DATA_PASSWORD=xxx
 
 用法:
     python pandaai_integration.py --verify --symbol 000001.SZ --date 2026-06-25
@@ -18,13 +16,13 @@ import logging
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict
 
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from auth import init_pandaai, is_panda_available, require_panda, _SETUP_HINT_SHORT
+from auth import init_pandaai, require_panda
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,15 +32,14 @@ logger = logging.getLogger("pandaai")
 
 
 # ═══════════════════════════════════════════════════════════════
-# 数据获取层 — 统一使用 auth 模块
+# 数据获取层
 # ═══════════════════════════════════════════════════════════════
 
 def _get_client():
-    """获取已认证的 panda_data 模块。首次调用会自动初始化。"""
-    panda = __import__("auth", fromlist=["get_panda"]).get_panda()
-    if not panda:
-        require_panda()
-    return panda
+    """获取已认证的 panda_data 模块"""
+    require_panda()
+    import panda_data
+    return panda_data
 
 
 def get_price_daily(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -360,7 +357,7 @@ def market_scan(trade_date: str) -> Dict:
 def main():
     parser = argparse.ArgumentParser(
         description="PandaAI 交叉验证 — 验证新闻信号的实际预测力",
-        epilog=f"认证: {_SETUP_HINT_SHORT}",
+        epilog="认证: cp .env.example .env 并填入手机号密码。详见 https://www.pandaai.online/data-service",
     )
     parser.add_argument("--verify", action="store_true", help="单股交叉验证")
     parser.add_argument("--symbol", default="000001.SZ", help="股票代码")
@@ -374,7 +371,7 @@ def main():
     if not panda_ok:
         if args.backtest or args.market_scan or args.verify:
             logger.error("回测/验证功能需要 PandaAI 凭证。")
-            logger.info(_SETUP_HINT_SHORT)
+            logger.info("cp .env.example .env 并填入手机号和密码即可。")
             sys.exit(1)
         else:
             logger.info("PandaAI 未配置。运行 '--help' 查看认证方式。")
@@ -395,7 +392,7 @@ def main():
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
     else:
         print("未指定操作。可用: --verify / --market-scan / --backtest")
-        print(f"\n{_SETUP_HINT_SHORT}")
+        print(f"\n认证: cp .env.example .env 并填入手机号和密码。详见 https://www.pandaai.online/data-service")
 
 
 if __name__ == "__main__":
