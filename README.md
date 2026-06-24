@@ -338,6 +338,8 @@ python test.py
 
 ## 🌏 数据源
 
+### 新闻采集（AKShare — 免费，无需注册）
+
 | 数据源 | API | 条数 | 特点 |
 |--------|-----|------|------|
 | 东方财富 | `ak.stock_info_global_em()` | 200 | 全球快讯，覆盖广 |
@@ -345,6 +347,31 @@ python test.py
 | 同花顺 | `ak.stock_info_global_ths()` | 20 | 实时直播，时效性强 |
 
 > ℹ️ 使用 AKShare 开源 API，无需注册。详见 [data_sources.md](references/data_sources.md)。
+
+### 信号验证（PandaAI — 可选增强）
+
+**解决核心问题：LLM 的 confidence 是自我感觉还是真有预测力？**
+
+配置 PandaAI 后，可以验证每条新闻信号的 4 个维度：
+
+| 维度 | PandaAI 函数 | 验证什么 |
+|------|-------------|---------|
+| 价格 | `get_stock_daily` | LLM 说 bullish，次日真的涨了吗？ |
+| 资金 | `get_margin` / `get_hsgt_hold` | 杠杆资金和北向是否同向？ |
+| 内部人 | `get_fina_forecast` / `get_repurchase` | 有业绩预告/回购/增减持支撑吗？ |
+| 游资 | `get_lhb_list` | 龙虎榜上榜了吗？ |
+
+```bash
+# 快速配置
+cp .env.example .env
+# 编辑 .env 填入 PANDA_DATA_TOKEN=xxx
+# 或: export PANDA_DATA_TOKEN="xxx"
+
+# 运行回测
+python scripts/pandaai_integration.py --backtest output/news_trading_2026-06-25.parquet
+```
+
+> `.env` 已加入 `.gitignore`，不会被提交。详见 [pandaai_api_list.md](references/pandaai_api_list.md)。
 
 ---
 

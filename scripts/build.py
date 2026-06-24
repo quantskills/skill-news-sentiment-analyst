@@ -274,8 +274,10 @@ def extract_key_entities(text: str) -> Dict:
 
 
 def collect_market_context(trade_date: str) -> str:
+    """采集市场背景。先用 AKShare（免费），再尝试 PandaAI 增强。"""
     context_parts = []
 
+    # ── AKShare 基础数据（始终可用）────────────────────────
     try:
         df_index = ak.stock_zh_index_daily_em(symbol="sh000001")
         if not df_index.empty:
@@ -311,7 +313,49 @@ def collect_market_context(trade_date: str) -> str:
     except Exception as e:
         logger.warning(f"获取板块数据失败: {e}")
 
+    # ── PandaAI 增强数据（可选，需配置 PANDA_DATA_TOKEN）──
+    _panda_enhance_market_context(context_parts, trade_date)
+
     return "; ".join(context_parts) if context_parts else "市场背景数据暂不可用"
+
+
+def _panda_enhance_market_context(context_parts: list, trade_date: str) -> None:
+    """尝试用 PandaAI 数据增强市场背景：北向资金、融资趋势、龙虎榜"""
+    try:
+        from auth import init_pandaai, is_panda_available
+        if not is_panda_available():
+            if not init_pandaai(verbose=False):
+                return
+
+        import panda_data
+
+        # 北向资金
+        try:
+            hsgt = panda_data.get_hsgt_hold(
+                start_date=trade_date, end_date=trade_date
+            )
+            if isinstance(hsgt, list) and hsgt:
+                context_parts.append(f"北向资金: {hsgt[-1] if isinstance(hsgt[-1], dict) else '可用'}")
+            elif hasattr(hsgt, '__len__') and len(hsgt) > 0:
+                context_parts.append(f"北向资金: {len(hsgt)} 条记录")
+        except Exception:
+            pass  # 静默降级 — 北向不是必需的
+
+        # 龙虎榜概览
+        try:
+            lhb = panda_data.get_lhb_list(trade_date=trade_date)
+            count = len(lhb) if hasattr(lhb, '__len__') else 0
+            if count > 0:
+                context_parts.append(f"龙虎榜: {count} 只股票上榜")
+        except Exception:
+            pass
+
+        logger.info("市场背景已通过 PandaAI 增强（北向+龙虎榜）")
+
+    except ImportError:
+        pass  # PandaAI 未安装
+    except Exception as e:
+        logger.debug(f"PandaAI 增强失败，使用基础市场背景: {e}")
 
 
 def structure_news_for_ai(news: Dict, all_news_titles: Optional[List[str]] = None,

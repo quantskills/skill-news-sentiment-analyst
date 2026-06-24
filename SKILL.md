@@ -150,11 +150,36 @@ Parquet 字段：trade_date, build_id, build_name, target_id, result_type, resul
 
 ## 依赖
 
+### 核心依赖（必需）
 - akshare >= 1.10.0
 - pandas >= 1.5.0
 - pyarrow >= 10.0.0
 
 安装：`pip install akshare pandas pyarrow`
+
+### PandaAI 增强（可选）
+
+**配置后可将信号验证从"LLM 自我感觉"升级为"多维度交叉验证"。**
+
+```bash
+# 1. 安装 SDK
+pip install panda_data
+
+# 2. 设置凭证（选一种）
+#    方式A: 环境变量（推荐 — 临时有效，不写磁盘）
+export PANDA_DATA_TOKEN="your-token-from-pandaai"
+
+#    方式B: .env 文件（持久化，已 gitignore）
+cp .env.example .env
+# 编辑 .env 填入 PANDA_DATA_TOKEN=xxx
+
+# 3. 验证连接
+python scripts/pandaai_integration.py --market-scan
+```
+
+**未配置时不影响核心新闻采集**，只是增强功能（回测、资金流验证、内部人信号）不会启用。
+
+> 获取凭证: https://www.pandaai.online/data-service
 
 ## 注意事项
 
@@ -163,4 +188,5 @@ Parquet 字段：trade_date, build_id, build_name, target_id, result_type, resul
 - 按标题自动去重
 - 市场背景数据自动采集（大盘指数、板块涨跌）
 - 关联新闻自动匹配（同板块或同股票的其他新闻）
+- `.env` 文件已加入 `.gitignore`，不会被提交到 GitHub
 - 数据源详见 [references/data_sources.md](references/data_sources.md)

@@ -15,6 +15,9 @@ scripts/test_output/
 .vscode/
 .idea/
 
+# Credentials (DO NOT COMMIT)
+.env
+
 # OS
 .DS_Store
 Thumbs.db
