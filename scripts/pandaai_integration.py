@@ -500,24 +500,36 @@ def backtest(parquet_path: str, lookahead: int = 1) -> pd.DataFrame:
 
 def enrich_signals(signals: list, trade_date: str) -> list:
     """
-    对 generate_signal_list() 的输出逐条注入 PandaAI 验证数据。
-    每条新增 s['verify']: {price, margin, lhb, lhb_detail, pledge_risk}
+    主动验证每条信号 — PandaAI 数据不是贴标签，而是改结论。
+
+    每条信号:
+      - verify: 原始验证数据 (price/margin/lhb/pledge)
+      - confidence_original: LLM 原始置信度
+      - confidence: 经 PandaAI 调整后的置信度
+      - alerts: 数据矛盾/确认标记
     """
     if not signals:
         return signals
+
+    # 保存原始置信度
+    for s in signals:
+        s["confidence_original"] = s.get("confidence", 0)
+
     if not _ensure_connected():
+        for s in signals:
+            s["verify"] = {}
+            s["alerts"] = ["PandaAI 未配置"]
         return signals
 
     pd_mod = _get_client()
     codes = list({s["code"] for s in signals if s.get("code")})
     date_fmt = trade_date.replace("-", "")
-    start_5d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
     start_7d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y%m%d")
+    start_5d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
 
-    # 价格
+    # 批量拉数据
     price_cache = get_stock_price_snapshot(codes, trade_date)
 
-    # 融资
     margin_cache = {}
     for code in codes:
         try:
@@ -529,7 +541,6 @@ def enrich_signals(signals: list, trade_date: str) -> list:
         except Exception:
             pass
 
-    # 质押风险
     pledge_cache = {}
     for code in codes:
         try:
@@ -538,17 +549,11 @@ def enrich_signals(signals: list, trade_date: str) -> list:
                 for col in ["pledge_ratio", "质押比例", "pledge_rate"]:
                     if col in pledge.columns:
                         ratio = float(pledge[col].iloc[-1])
-                        if ratio > 50:
-                            pledge_cache[code] = "high"
-                        elif ratio > 30:
-                            pledge_cache[code] = "medium"
-                        else:
-                            pledge_cache[code] = "low"
+                        pledge_cache[code] = round(ratio, 1)
                         break
         except Exception:
             pass
 
-    # 龙虎榜 + 明细
     lhb_cache = {}
     try:
         lhb_list = pd_mod.get_lhb_list(start_date=date_fmt, end_date=date_fmt)
@@ -557,48 +562,79 @@ def enrich_signals(signals: list, trade_date: str) -> list:
                 sym = str(item.get("symbol", ""))
                 code = sym[-6:] if len(sym) >= 6 else sym
                 if code.isdigit() and len(code) == 6:
-                    lhb_cache[code] = {"on_list": True}
-
-        for code in list(lhb_cache.keys()):
-            try:
-                detail = pd_mod.get_lhb_detail(symbol=_format_symbol(code), start_date=date_fmt, end_date=date_fmt)
-                if not _is_empty(detail):
-                    inst_buy = 0
-                    retail_buy = 0
-                    trader_col = None
-                    for col in ["trader_type", "席位类型", "类型"]:
-                        if col in detail.columns:
-                            trader_col = col
-                            break
-                    amt_col = None
-                    for col in ["buy_amount", "买入金额", "amount"]:
-                        if col in detail.columns:
-                            amt_col = col
-                            break
-                    if trader_col and amt_col:
-                        for _, d in detail.iterrows():
-                            if "机构" in str(d.get(trader_col, "")):
-                                inst_buy += float(d.get(amt_col, 0) or 0)
-                            else:
-                                retail_buy += float(d.get(amt_col, 0) or 0)
-                    lhb_cache[code]["inst_net"] = round(inst_buy, 0) if inst_buy else None
-                    lhb_cache[code]["retail_net"] = round(retail_buy, 0) if retail_buy else None
-            except Exception:
-                pass
+                    lhb_cache[code] = True
     except Exception:
         pass
 
+    # ── 主动调整每条信号的置信度 ──
     for s in signals:
         code = s.get("code", "")
-        lhb = lhb_cache.get(code, {})
-        s["verify"] = {
-            "price": price_cache.get(code, {}),
-            "margin": margin_cache.get(code),
-            "lhb": lhb.get("on_list", False),
-            "lhb_detail": {"inst_net": lhb.get("inst_net"), "retail_net": lhb.get("retail_net")} if lhb.get("on_list") else None,
-            "pledge_risk": pledge_cache.get(code),
-        }
+        direction = s.get("direction", "hold")
+        conf = s.get("confidence", 0)
+        px = price_cache.get(code, {})
+        margin = margin_cache.get(code)
+        pledge = pledge_cache.get(code)
+        on_lhb = lhb_cache.get(code, False)
+        alerts = []
+        adjustment = 0.0
 
+        chg = px.get("latest_change_pct")
+
+        # 价格方向检查
+        if chg is not None:
+            if direction == "bullish" and chg < -2:
+                alerts.append(f"价格矛盾: 看多但今日{chg}%")
+                adjustment -= 0.15
+            elif direction == "bearish" and chg > 2:
+                alerts.append(f"价格矛盾: 看空但今日+{chg}%")
+                adjustment -= 0.15
+            elif direction == "bullish" and chg > 0:
+                alerts.append(f"价格确认: +{chg}%")
+                adjustment += 0.05
+            elif direction == "bearish" and chg < 0:
+                alerts.append(f"价格确认: {chg}%")
+                adjustment += 0.05
+
+        # 融资方向检查
+        if margin:
+            if direction == "bullish" and margin == "down":
+                alerts.append("融资矛盾: 看多但杠杆减")
+                adjustment -= 0.10
+            elif direction == "bearish" and margin == "up":
+                alerts.append("融资矛盾: 看空但杠杆增")
+                adjustment -= 0.10
+            elif direction == "bullish" and margin == "up":
+                alerts.append("融资确认: 杠杆同向增")
+                adjustment += 0.10
+            elif direction == "bearish" and margin == "down":
+                alerts.append("融资确认: 杠杆同向减")
+                adjustment += 0.10
+
+        # 质押风险
+        if pledge is not None and pledge > 50:
+            alerts.append(f"质押高危: {pledge}%")
+            adjustment -= 0.15
+        elif pledge is not None and pledge > 30:
+            alerts.append(f"质押偏高: {pledge}%")
+
+        # 龙虎榜
+        if on_lhb:
+            alerts.append("龙虎榜上榜")
+
+        # 应用调整
+        new_conf = round(max(0.0, min(1.0, conf + adjustment)), 2)
+        s["confidence"] = new_conf
+        s["confidence_original"] = conf
+        s["verify"] = {
+            "price": px,
+            "margin": margin,
+            "lhb": on_lhb,
+            "pledge_risk": "high" if (pledge and pledge > 50) else ("medium" if (pledge and pledge > 30) else ("low" if pledge is not None else None)),
+        }
+        s["alerts"] = alerts
+
+    # 按调整后的置信度重排
+    signals.sort(key=lambda x: x["confidence"], reverse=True)
     return signals
 
 
