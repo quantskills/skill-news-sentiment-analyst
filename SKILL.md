@@ -116,25 +116,44 @@ from pandaai_integration import enrich_signals
 signals = generate_signal_list(pipeline['parquet_path'], min_confidence=0.5)
 signals = enrich_signals(signals, today)
 
-print(f"## {today} 选股信号列表\n")
-print(f"| 股票代码 | 公司名称 | 方向 | 置信度 | 调整 | 近1日 | 融资 | 龙虎榜 | 质押 | 来源新闻 |")
-print(f"|----------|----------|------|--------|------|-------|------|--------|------|----------|")
+# ── 市场概况 ──
+bullish_n = len([s for s in signals if s['direction'] == 'bullish'])
+bearish_n = len([s for s in signals if s['direction'] == 'bearish'])
+with_data = len([s for s in signals if s.get('verify', {}).get('price_1d') is not None])
+adj_up = len([s for s in signals if s['confidence'] > s.get('confidence_original', 0)])
+adj_down = len([s for s in signals if s['confidence'] < s.get('confidence_original', 0)])
+
+print(f"## {today} A股新闻分析报告\n")
+print(f"**市场情绪:** 🟢{bullish_n}看多 🔴{bearish_n}看空 | PandaAI数据覆盖: {with_data}/{len(signals)} | 置信度调整: {adj_up}升{adj_down}降")
+print()
+
+# ── 信号表格 ──
+print(f"| 股票代码 | 公司名称 | 方向 | 置信度 | 调整 | 近1日 | 5日 | 融资 | 行业 | 质押 |")
+print(f"|----------|----------|------|--------|------|-------|-----|------|------|------|")
 for s in signals:
     mark = "🟢" if s["direction"] == "bullish" else "🔴"
     orig = s.get('confidence_original', s['confidence'])
     adj = s['confidence'] - orig
-    adj_str = f"+{adj:.2f}" if adj > 0 else f"{adj:.2f}" if adj < 0 else "—"
+    adj_str = f"+{adj:.2f}" if adj > 0.005 else f"{adj:.2f}" if adj < -0.005 else "—"
     v = s.get("verify", {})
-    px = v.get("price", {})
-    price_str = f"{px.get('latest_change_pct', '-')}%"
+    p1 = f"{v.get('price_1d'):+.1f}%" if v.get('price_1d') is not None else "-"
+    p5 = f"{v.get('price_5d'):+.1f}%" if v.get('price_5d') is not None else "-"
     margin_str = v.get("margin") or "-"
-    lhb_str = "🔥" if v.get("lhb") else ""
-    pledge = v.get("pledge_risk")
-    pledge_str = {"high": "⚠️高", "medium": "中", "low": "低"}.get(pledge, "-")
-    print(f"| {s['code']} | {s['name']} | {mark} {s['direction']} | {s['confidence']:.2f} | {adj_str} | {price_str} | {margin_str} | {lhb_str} | {pledge_str} | {s['news_title']} |")
+    industry_str = v.get("industry") or "-"
+    pledge_str = {"high": "⚠️高", "medium": "中", "low": "低"}.get(v.get("pledge_risk"), "-")
+    print(f"| {s['code']} | {s['name']} | {mark} {s['direction']} | {s['confidence']:.2f} | {adj_str} | {p1} | {p5} | {margin_str} | {industry_str} | {pledge_str} |")
+
+# ── 逐条详细分析 ──
+print(f"\n### 逐条分析\n")
+for s in signals:
+    mark = "🟢 看多" if s["direction"] == "bullish" else "🔴 看空"
+    print(f"**{mark} {s['name']}({s['code']})** — {s.get('analysis', '')}")
+    print(f"  来源: {s.get('news_title', '')}")
     for alert in s.get('alerts', []):
-        print(f"| > {alert} |")
-print(f"\n共 {len(signals)} 个信号（置信度 >= 0.5）")
+        print(f"  → {alert}")
+    print()
+
+print(f"共 {len(signals)} 个信号（置信度 >= 0.5）")
 ```
 
 PandaAI 未配置时 `enrich_signals()` 原样返回，验证列显示 N/A。

@@ -501,18 +501,18 @@ def backtest(parquet_path: str, lookahead: int = 1) -> pd.DataFrame:
 
 def enrich_signals(signals: list, trade_date: str) -> list:
     """
-    主动验证每条信号 — PandaAI 数据不是贴标签，而是改结论。
+    主动验证每条信号 — PandaAI 数据改结论 + 补全上下文。
 
-    每条信号:
-      - verify: 原始验证数据 (price/margin/lhb/pledge)
+    每条信号新增:
       - confidence_original: LLM 原始置信度
       - confidence: 经 PandaAI 调整后的置信度
-      - alerts: 数据矛盾/确认标记
+      - verify: {price{latest_change_pct,5d_change_pct}, margin, lhb, pledge_ratio, industry}
+      - alerts: [数据矛盾/确认描述]
+      - analysis: 一句话分析总结
     """
     if not signals:
         return signals
 
-    # 保存原始置信度
     for s in signals:
         s["confidence_original"] = s.get("confidence", 0)
 
@@ -520,6 +520,7 @@ def enrich_signals(signals: list, trade_date: str) -> list:
         for s in signals:
             s["verify"] = {}
             s["alerts"] = ["PandaAI 未配置"]
+            s["analysis"] = ""
         return signals
 
     pd_mod = _get_client()
@@ -528,7 +529,7 @@ def enrich_signals(signals: list, trade_date: str) -> list:
     start_7d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y%m%d")
     start_5d = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
 
-    # 批量拉数据
+    # 批量拉全量数据
     price_cache = get_stock_price_snapshot(codes, trade_date)
 
     margin_cache = {}
@@ -552,6 +553,16 @@ def enrich_signals(signals: list, trade_date: str) -> list:
                         ratio = float(pledge[col].iloc[-1])
                         pledge_cache[code] = round(ratio, 1)
                         break
+        except Exception:
+            pass
+
+    industry_cache = {}
+    for code in codes:
+        try:
+            ind = pd_mod.get_stock_industry(stock_symbol=_format_symbol(code))
+            if not _is_empty(ind):
+                row = ind.iloc[0].to_dict() if isinstance(ind, pd.DataFrame) else ind
+                industry_cache[code] = row.get("industry_name", "")
         except Exception:
             pass
 
@@ -626,15 +637,48 @@ def enrich_signals(signals: list, trade_date: str) -> list:
         new_conf = round(max(0.0, min(1.0, conf + adjustment)), 2)
         s["confidence"] = new_conf
         s["confidence_original"] = conf
+
+        # 丰富验证数据
+        chg_5d = px.get("5d_change_pct")
+        industry = industry_cache.get(code, "")
+        pledge_ratio = pledge_cache.get(code)
+
         s["verify"] = {
-            "price": px,
+            "price_1d": chg,
+            "price_5d": chg_5d,
             "margin": margin,
             "lhb": on_lhb,
-            "pledge_risk": "high" if (pledge and pledge > 50) else ("medium" if (pledge and pledge > 30) else ("low" if pledge is not None else None)),
+            "pledge_ratio": pledge_ratio,
+            "pledge_risk": "high" if (pledge_ratio and pledge_ratio > 50) else ("medium" if (pledge_ratio and pledge_ratio > 30) else ("low" if pledge_ratio is not None else None)),
+            "industry": industry,
         }
         s["alerts"] = alerts
 
-    # 按调整后的置信度重排
+        # 生成一句话分析
+        parts = []
+        name = s.get("name", code)
+        dir_cn = "看多" if direction == "bullish" else "看空"
+        parts.append(f"{name} {dir_cn}")
+
+        if chg is not None:
+            parts.append(f"今日{chg:+.1f}%")
+        if chg_5d is not None:
+            parts.append(f"5日{chg_5d:+.1f}%")
+        if margin:
+            parts.append(f"融资{'增' if margin == 'up' else '减'}")
+        if industry:
+            parts.append(f"行业:{industry}")
+        if pledge_ratio is not None and pledge_ratio > 30:
+            parts.append(f"质押{pledge_ratio}%{'⚠' if pledge_ratio > 50 else ''}")
+        if on_lhb:
+            parts.append("龙虎榜上榜")
+        if adjustment > 0:
+            parts.append(f"→ 置信度上调{adjustment:+.2f}")
+        elif adjustment < 0:
+            parts.append(f"→ 置信度下调{adjustment:.2f}")
+
+        s["analysis"] = " | ".join(parts)
+
     signals.sort(key=lambda x: x["confidence"], reverse=True)
     return signals
 
