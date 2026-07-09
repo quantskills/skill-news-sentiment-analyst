@@ -1,453 +1,253 @@
 # 📰 News Sentiment Analyst
 
-A 股财经新闻 → 结构化数据 → LLM 情感分析 → 多维度交叉验证
+A 股财经新闻分析 Skill — 采集 → AI 自主分析 → PandaAI 多维度验证 → 投行级报告
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://www.python.org/)
 [![akshare](https://img.shields.io/badge/akshare-latest-green)](https://github.com/akfamily/akshare)
-[![pandas](https://img.shields.io/badge/pandas-latest-green)](https://pandas.pydata.org/)
-[![pyarrow](https://img.shields.io/badge/pyarrow-latest-green)](https://arrow.apache.org/)
-[![tests](https://img.shields.io/badge/tests-30%20passed-success)]()
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE.txt)
 
-[安装](#-安装)  |  [快速开始](#-快速开始)  |  [架构](#-架构)  |  [信号验证](#-信号验证)  |  [测试](#-测试)
-
 ---
 
-## 🎯 功能概述
+## 🎯 核心能力
 
 ```
- 东方财富(200)                           ┌──────────────┐
- 富途牛牛(50)       ──→  提取实体  ──→   │  Parquet 输出  │  ──→  Agent + LLM  ──→  交易信号
- 同花顺(20)            (股票/板块/实体)   │  (结构化数据)  │       (7步因果推理)
-                                         └──────┬───────┘
-                                                │
-                              ┌─────────────────▼─────────────────┐
-                              │  PandaAI 交叉验证                  │
-                              │  价格回测 │ 融资融券 │ 北向 │ 龙虎榜 │
-                              └───────────────────────────────────┘
+ 东方财富(200)                        ┌──────────────────────┐
+ 富途牛牛(50)       ──→  AI 分析 ──→  │  投行级终端报告      │  ──→  向用户展示
+ 同花顺(20)            (自主识别股票)   │  5 Section 结构      │
+                                      │  Parquet 持久化      │
+                                      └──────┬───────────────┘
+                                             │
+                                    ┌────────▼────────────────┐
+                                    │  PandaAI 多维度验证      │
+                                    │  OHLCV/振幅/成交额/融资   │
+                                    │  行业/5日涨跌/融资变化率  │
+                                    └─────────────────────────┘
 ```
 
-**设计原则：** Skill 负责数据采集和结构化，AI 负责分析和决策，PandaAI 负责信号验证。
+**关键差异**：
+- 不依赖正则/关键词提取股票代码，AI 用自己的知识判断新闻影响哪些股票
+- 报告基于实际数据动态生成分析结论，**无硬编码文字**
+- 投行级报告风格：执行摘要 → 市场概况 → 主题分析 → 股票面板 → 核心观察
 
----
+## 🚀 快速开始
 
-## ✨ 核心能力
-
-### 🔍 多源采集
-| 数据源 | API | 条数 | 特点 |
-|--------|-----|------|------|
-| 东方财富 | `ak.stock_info_global_em()` | 200 | 全球快讯，覆盖广 |
-| 富途牛牛 | `ak.stock_info_global_futu()` | 50 | 港美股视角 |
-| 同花顺 | `ak.stock_info_global_ths()` | 20 | 实时直播，时效性强 |
-
-按标题自动去重，约 225 条独立新闻。
-
-### 🧠 智能提取
-- **股票代码：** 正则 + 5500 只股票名称匹配
-- **板块识别：** 10 大板块关键词匹配
-- **实体提取：** 数字 / 日期 / 政策 / 事件
-- **关联新闻：** 跨板块自动关联
-
-### 📈 LLM Prompt
-- 15 年 A 股量化分析师人设
-- 7 步因果推理 Chain-of-Thought
-- 4 个数据感知 Few-shot 示例（含数据支撑和反直觉案例）
-- 结构化 JSON 输出 + 置信度评分
-
-### 📦 标准输出
-- Parquet 格式，10 个标准字段
-- `result_json` 包含完整 prompt
-- 支持增量打分写回
-- 稳定主键设计
-
-### 📶 选股信号
-- 基于新闻情感自动生成买卖信号
-- 股票代码 + 公司名称严格对应
-- 置信度过滤（默认 >= 0.5）
-- 按置信度降序排列
-
-### 🔬 信号验证
-- **价格回测：** 次日实际涨跌 vs LLM 预测方向
-- **资金流向：** 融资余额 + 北向资金是否同向
-- **内部人信号：** 业绩预告 / 回购 / 增减持
-- **游资动向：** 龙虎榜上榜情况
-
----
-
-## 🚀 安装
-
-> 仓库本身即是 skill 目录 — clone 后直接复制到 Claude Code 的 skills 路径即可。
-
-### 方式一：openskills（推荐）
+### 安装
 
 ```bash
-npm install -g openskills
-openskills install quantskills/news-sentiment-analyst
+pip install -r requirements.txt
 ```
 
-### 方式二：全局安装
+### 使用（AI Agent 自动执行）
+
+触发 skill 后，AI 会自动执行 5 步流程：
 
 ```bash
-git clone https://github.com/quantskills/news-sentiment-analyst.git
-cp -r news-sentiment-analyst ~/.claude/skills/
-pip install -r ~/.claude/skills/news-sentiment-analyst/requirements.txt
+# Step 1: 采集新闻
+python scripts/collector.py --date $(date +%Y-%m-%d) --max-news 30 --output /tmp/news.json
+
+# Step 2: AI 逐条分析新闻（AI 自主识别股票代码/板块/情感）
+# 输出保存到 /tmp/analysis.json
+
+# Step 3: PandaAI 多维度验证
+python scripts/verifier.py --codes 300750,600519 --date $(date +%Y-%m-%d) --output /tmp/verify.json
+
+# Step 4: 生成投行级报告
+python scripts/reporter.py --analysis /tmp/analysis.json --verify /tmp/verify.json --market /tmp/news.json --output-dir output
+
+# Step 5: 展示给用户
 ```
 
-### 方式三：项目级安装
+### 直接使用脚本
 
 ```bash
-git clone https://github.com/quantskills/news-sentiment-analyst.git
-mkdir -p .claude/skills
-cp -r news-sentiment-analyst .claude/skills/
-pip install -r .claude/skills/news-sentiment-analyst/requirements.txt
+# 采集今日新闻
+python scripts/collector.py
+
+# 验证特定股票
+python scripts/verifier.py --codes 300750,600519 --date 2026-07-09
+
+# 生成报告
+python scripts/reporter.py --analysis /tmp/analysis.json --verify /tmp/verify.json --market /tmp/news.json --trade-date 2026-07-09
 ```
-
-> ℹ️ 安装后重启 Claude Code，skill 将被自动发现。
-
-### PandaAI 数据服务
-
-```bash
-pip install panda_data
-cp .env.example .env
-# 编辑 .env 填入手机号和密码
-```
-
-> Elite 套餐(¥153/月)含融资融券+北向资金+龙虎榜+财务数据。
-
-### 验证安装
-
-```bash
-ls ~/.claude/skills/news-sentiment-analyst/
-# 应显示：SKILL.md  scripts/  references/  .env.example  ...
-
-cd ~/.claude/skills/news-sentiment-analyst/scripts
-python test.py
-```
-
----
-
-## ⚡ 快速开始
-
-### 通过 Claude Code
-
-安装后，直接对 Claude 说：
-
-> "分析今日 A 股新闻及其对交易的影响"
-
-Claude 会自动触发 skill：采集 → 提取 → 打分 → 报告。
-
-### 通过 Python 代码
-
-```python
-import sys, os
-sys.path.insert(0, os.path.expanduser("~/.claude/skills/news-sentiment-analyst/scripts"))
-
-from build import run_full_pipeline, score_single_news
-
-# 1. 采集新闻 + 市场背景，生成 prompt
-pipeline = run_full_pipeline(
-    trade_date="2026-05-29",
-    news_type="all",
-    max_news_count=50,
-    output_dir="output"
-)
-
-# 2. 逐条 LLM 打分
-for item in pipeline["prompts"]:
-    prompt = item["prompt"]
-    llm_response = "<LLM JSON response>"
-    score = score_single_news(pipeline["parquet_path"], item["idx"], llm_response)
-    print(f"  {item['news_title'][:30]}... → {score['sentiment']} {score['trading_direction']}")
-
-# 3. 回测信号胜率（需配置 PandaAI）
-from pandaai_integration import backtest
-backtest(pipeline["parquet_path"])
-```
-
----
-
-## 🧠 LLM 分析框架
-
-每条新闻的 prompt 要求 LLM 按 **7 步因果推理** 分析：
-
-| 步骤 | 内容 | 说明 |
-|------|------|------|
-| 1 | 核心事件 | 事实还是传闻？新信息还是旧信息？ |
-| 2 | 传导路径 | 事件 → 板块 → 个股，如何传导？ |
-| 3 | 数据交叉验证 | 价格同向？融资同向？质押风险？筹码趋势？财务支撑？ |
-| 4 | 时效性 | 即时影响还是滞后？已反映在股价中？ |
-| 5 | 确定性 | 官方公告 > 媒体报道 > 市场传闻 |
-| 6 | 市场背景 | 当前环境下是雪上加霜还是逆势利好？ |
-| 7 | 交叉关联与反直觉 | 和其他新闻共振还是对冲？利好出尽？ |
-
-### 输出格式
-
-```json
-{
-    "sentiment": "positive / negative / neutral",
-    "impact_level": "high / medium / low",
-    "trading_direction": "bullish / bearish / hold",
-    "confidence": 0.85,
-    "reason": "100字以内的因果推理"
-}
-```
-
----
 
 ## 🏗️ 架构
 
 ```
-┌─ AKShare (免费新闻) ────────────┐  ┌─ PandaAI (付费验证) ──────────┐
-│  stock_info_global_em()  200条  │  │  get_stock_daily()   日线回测  │
-│  stock_info_global_futu() 50条  │  │  get_margin()        融资融券  │
-│  stock_info_global_ths()  20条  │  │  get_hsgt_hold()     北向资金  │
-│  stock_board_industry_name_em() │  │  get_lhb_list()      龙虎榜    │
-└───────────┬─────────────────────┘  └────────────┬───────────────────┘
-            │                                     │
-            ▼                                     ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  build.py — 核心引擎                                                 │
-│  validate → collect → extract → structure → prompt → save → score   │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  Agent 层 (Claude / LLM)                                            │
-│  读取 prompt → 7步CoT推理 → 写回评分 → generate_signal_list()       │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  pandaai_integration.py — 交叉验证                                   │
-│  verify_signal() → backtest() → confidence vs 实际胜率对照表         │
-└─────────────────────────────────────────────────────────────────────┘
+scripts/
+├── collector.py     ← 新闻采集（AKShare 3源并行 + 去重 + 市场背景）
+├── verifier.py      ← PandaAI 多维度验证（OHLCV/振幅/成交额/融资变化率/行业）
+├── reporter.py      ← 投行级报告生成（rich 终端 + Parquet，动态观察引擎）
+└── output/          ← Parquet 输出目录
 ```
 
----
-
-## 📤 输出格式
-
-### Parquet 输出目录
+### 数据流
 
 ```
-output/news_trading_YYYY-MM-DD.parquet
+collector.py  ──→  AI Agent(LLM)  ──→  verifier.py  ──→  reporter.py
+  │                  │                  │                │
+  ▼                  ▼                  ▼                ▼
+ 新闻JSON         自主识别股票         PandaAI多维度     动态观察引擎
+ 市场背景         情感判断             验证数据         投行级报告
+ 板块TOP5                             36个字段         Parquet持久化
 ```
 
-默认输出到 `output/` 目录，可通过 `output_dir` 参数自定义。
+## 📦 报告结构
+
+### 终端报告（rich 彩色表格，投行风格）
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  NEWS SENTIMENT ANALYST  |  DAILY BRIEF  |  2026-07-09  |  2026-07-09 11:14
+  Analyst: AI Research Analyst, Sisyphus Alpha  |  Source: PandaAI · EastMoney · THS · Futu
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Section I: Executive Summary / 执行摘要
+  ┌──────────────────┬──────────────────────────────────────────────────┐
+  │ 新闻覆盖         │ 27 条                                            │
+  │ 涉及股票         │ 36 只                                            │
+  │ 情绪分布         │ 正面 14(52%)  负面 10(37%)  中性 3(11%)          │
+  │ 活跃板块（新闻） │ 保险(3次)、半导体(3次)、石油石化(2次)              │
+  └──────────────────┴──────────────────────────────────────────────────┘
+
+Section II: Market Context / 市场概况
+  ┌──────────────────┬──────────────────────────────────────────────────┐
+  │ 板块涨幅 TOP5    │ 油气及炼化 +5.74%                                │
+  │                  │ 文字媒体 +5.19%                                   │
+  │                  │ 油服工程 +4.49%                                   │
+  │                  │ 半导体材料 +4.16%                                 │
+  │                  │ 油田服务 +3.56%                                   │
+  └──────────────────┴──────────────────────────────────────────────────┘
+
+Section III: Thematic Analysis / 主题分析
+  ▎科技/半导体 (6条)
+    🟢 半导体材料板块持续走强，上海合晶20cm涨停
+      板块: 半导体材料, 半导体设备
+      ▲ 上海合晶(688584)  +12.77%  振幅18.8%  成交10.2亿  融资↓  电子
+        → 涨停20cm，资金追捧半导体材料
+      ▲ 中芯国际(688981)  +10.91%  振幅8.2%  成交114.9亿  融资↓  电子
+      ...
+
+Section IV: Stock Dashboard / 股票数据面板
+  ┌──────┬────────┬────────┬──────┬────────┬──────┬──────┬──────┬──────────┬──────────────────────┐
+  │ 代码 │ 名称   │ 行业   │ 收盘 │ 涨跌幅 │ 振幅 │ 成交额│ 融资 │ 5日涨跌  │ 分析观点             │
+  ├──────┼────────┼────────┼──────┼────────┼──────┼──────┼──────┼──────────┼──────────────────────┤
+  │000977│浪潮信息│ 计算机 │ 85.99│+21.01% │ 5.6% │181.0 │↓-8.8│ -18.40%  │ 国产算力龙头...      │
+  │002057│中钢天源│社会服务│  9.70│-19.03% │ 9.3% │  4.5 │↓-1.2│ +18.00%  │ 触及跌停...          │
+  │688584│上海合晶│ 电子   │ 40.27│+12.77% │18.8% │ 10.2 │↓-12.9│ +5.72%   │ 涨停20cm...          │
+  └──────┴────────┴────────┴──────┴────────┴──────┴──────┴──────┴──────────┴──────────────────────┘
+
+Section V: Key Observations / 核心观察（由动态引擎基于实际数据计算）
+  [1] 涨幅居前: 浪潮信息(+21.01%)、华虹宏力(+18.86%)、上海合晶(+12.77%)
+  [2] 跌幅居前: 中钢天源(-19.03%)、天齐锂业(-18.26%)、永兴材料(-16.66%)
+  [3] 高波动标的: 上海合晶(振幅18.82%)、华虹宏力(振幅14.18%)、华天科技(振幅10.58%)
+  [4] 预期偏差: 招商南油(-2.90%) 分析看多但实际大跌
+  [5] 融资资金偏向谨慎（23只融资下降 vs 13只上升）
+  [6] 板块强弱: 有色金属整体偏弱(均值-13.03%)
+
+Sentiment Summary / 情绪总览
+  ┌──────────┬────────┬────────┐
+  │ 情绪     │ 新闻数 │ 占比   │
+  ├──────────┼────────┼────────┤
+  │ 🟢 正面  │   14   │  52%   │
+  │ 🔴 负面  │   10   │  37%   │
+  │ ⚪ 中性  │    3   │  11%   │
+  └──────────┴────────┴────────┘
+```
 
 ### Parquet 字段
 
-| 字段 | 必填 | 类型 | 说明 |
-|------|------|------|------|
-| `trade_date` | 视情况 | string | 交易日期 YYYY-MM-DD |
-| `build_id` | ✓ | string | NSA |
-| `build_name` | ✓ | string | News Sentiment Analyst |
-| `target_id` | | string | 股票代码或 板块_news_id |
-| `result_type` | ✓ | string | news_analysis / summary |
-| `result_value` | ✓ | string | pending_ai_analysis → data_ready |
-| `result_json` | | string | 完整新闻数据 + LLM prompt + llm_score |
-| `source_data_date` | | string | 原始数据日期 |
-| `data_version` | ✓ | string | 1.0.0 |
-| `update_time` | ✓ | string | 结果生成时间 |
+| 字段 | 说明 |
+|------|------|
+| trade_date | 交易日期 |
+| build_id / build_name | 构建标识 |
+| result_type | news_analysis |
+| result_json | 完整分析（含增强验证数据） |
+| data_version | 3.0.0 |
+| update_time | 时间戳 |
 
-### 选股信号列表
+`result_json` 内嵌的增强字段：
 
-```python
-from build import generate_signal_list
+| 字段 | 说明 |
+|------|------|
+| price_1d | 当日涨跌幅(%) |
+| price_5d | 5日涨跌幅(%) |
+| close / open / high / low | OHLCV |
+| amplitude | 振幅(%, (high-low)/pre_close) |
+| volume | 成交量(股) |
+| amount / amount_b | 成交额(元/亿元) |
+| num_trades | 成交笔数 |
+| margin | 融资方向(up/down) |
+| margin_change_pct | 融资余额变化率(%) |
+| industry | 行业分类 |
+| stock_name | 股票名称 |
 
-signals = generate_signal_list("output/news_trading_2026-05-30.parquet", min_confidence=0.5)
-```
+## ⚙️ 参数
 
-输出格式：
+### collector.py
 
-```json
-[
-    {
-        "code": "300750",
-        "name": "宁德时代",
-        "direction": "bullish",
-        "confidence": 0.75,
-        "sentiment": "positive",
-        "impact_level": "high",
-        "reason": "换电站扩张超预期，验证商业模式可行性",
-        "news_title": "宁德时代：巧克力换电累计落站..."
-    }
-]
-```
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| --date | 今天 | 交易日期 |
+| --max-news | 50 | 最大条数 |
+| --news-type | all | macro / company / all |
+| --output | stdout | JSON 输出路径 |
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `code` | string | 股票代码（6 位） |
-| `name` | string | 公司名称 |
-| `direction` | string | bullish / bearish |
-| `confidence` | float | 置信度 0.0-1.0 |
-| `sentiment` | string | positive / negative / neutral |
-| `impact_level` | string | high / medium / low |
-| `reason` | string | 分析理由（截断 80 字） |
-| `news_title` | string | 来源新闻标题（截断 30 字） |
+### verifier.py
 
----
+| 参数 | 说明 |
+|------|------|
+| --codes | 股票代码逗号分隔, 如 300750,600519 |
+| --date | 交易日期 |
+| --output | JSON 输出路径 |
 
-## 🔬 信号验证
+### reporter.py
 
-### 4 维度交叉验证
+| 参数 | 说明 |
+|------|------|
+| --analysis | AI 分析 JSON 路径 |
+| --verify | PandaAI 验证 JSON 路径 |
+| --market | 市场背景 JSON 路径 |
+| --trade-date | 交易日期 |
+| --output-dir | Parquet 输出目录 |
+| --no-rich | 禁用 rich 格式(纯文本 fallback) |
 
-| 维度 | PandaAI 函数 | 验证什么 |
-|------|-------------|---------|
-| 价格 | `get_stock_daily` | LLM 说 bullish，次日真的涨了吗？ |
-| 资金 | `get_margin` / `get_hsgt_hold` | 杠杆资金和北向是否同向？ |
-| 内部人 | `get_fina_forecast` / `get_repurchase` | 有业绩预告/回购/增减持支撑吗？ |
-| 游资 | `get_lhb_list` | 龙虎榜上榜了吗？ |
-
-### 使用
+## 🔌 PandaAI 配置
 
 ```bash
-# 配置凭证
 cp .env.example .env
-# 编辑 .env 填入手机号和密码
-
-# 单股验证
-python scripts/pandaai_integration.py --verify --symbol 000001.SZ --date 2026-06-25
-
-# 市场全景
-python scripts/pandaai_integration.py --market-scan --date 2026-06-25
-
-# 批量回测
-python scripts/pandaai_integration.py --backtest output/news_trading_2026-06-25.parquet
+# 编辑 .env:
+#   PANDA_DATA_USERNAME=86手机号
+#   PANDA_DATA_PASSWORD=密码
 ```
 
-### 回测输出示例
+验证器使用 PandaAI 的以下数据源：
 
-```
-================================================================
-  回 测 结 果
-================================================================
-  信号总数: 45
-  整体胜率: 53.3%
+| API | 数据 |
+|-----|------|
+| `get_stock_rt_daily` | 当日实时 OHLCV、成交量、成交额、成交笔数 |
+| `get_market_data` | 前收盘价、涨跌停价、股票名称 |
+| `get_stock_daily` | 历史收盘价(用于计算5日涨跌) |
+| `get_margin` | 融资余额(方向 + 变化率) |
+| `get_stock_industry` | 行业分类 |
 
-     bullish:   28 条  胜率 50.0%
-     bearish:   17 条  胜率 58.8%
+> Elite 套餐(¥153/月)含融资融券+北向资金+龙虎榜+财务数据。
+> 未配置时跳过验证步骤，核心分析不受影响。
 
-  confidence 分桶:
-  [0.8-1.0):   12 条  胜率 58.3%  ███████████
-  [0.5-0.8):   22 条  胜率 54.5%  ██████████
-  [0.2-0.5):    8 条  胜率 37.5%  ███████
-  [0.0-0.2):    3 条  胜率 66.7%  █████████████
-================================================================
-```
+## 🧠 动态观察引擎
 
-> `.env` 已加入 `.gitignore`，不会被提交。详细 API 列表见 [pandaai_api_list.md](references/pandaai_api_list.md)。
+`reporter.py` 的 `_compute_observations()` 函数基于实际数据实时计算 8 类观察：
 
----
+1. **涨跌幅极端值** — 当日涨幅/跌幅 TOP3
+2. **高波动标的** — 振幅 > 8% 的股票
+3. **成交额集中度** — 资金扎堆方向
+4. **预期偏差** — AI分析方向 vs 实际走势背离 > 2%
+5. **融资情绪** — 杠杆资金整体方向（↑/↓占比）
+6. **融资异动** — 融资余额变化率极端值
+7. **板块聚焦** — 新闻提及最多的板块
+8. **板块强弱** — 同行业股票平均涨跌
 
-## 🗃️ 项目结构
-
-```
-news-sentiment-analyst/
-├── SKILL.md                       ← Claude Code skill 定义（必需）
-├── README.md                      ← 项目文档
-├── SUMMARY.md                     ← 设计评审与质量分析
-├── LICENSE.txt                    ← Apache 2.0 许可证
-├── .openskills.json               ← openskills 元数据
-├── .env.example                   ← PandaAI 凭证模板（.env 已 gitignore）
-├── .gitignore
-├── requirements.txt               ← Python 依赖
-├── scripts/
-│   ├── build.py                   ← 核心引擎：采集 + 提取 + 结构化 + Parquet
-│   ├── sentiment.py               ← LLM prompt 生成 + 响应解析
-│   ├── auth.py                    ← PandaAI 凭证管理
-│   ├── pandaai_integration.py     ← 交叉验证 + 批量回测引擎
-│   └── test.py                    ← 测试脚本（30 个用例）
-├── references/
-│   ├── api_guide.md               ← API 调用文档
-│   ├── data_sources.md            ← AKShare 数据源说明
-│   └── pandaai_api_list.md       ← PandaAI 完整 API 目录
-└── output/                         ← Parquet 输出（已 gitignore）
-```
-
----
-
-## 🧪 测试
-
-```bash
-cd scripts
-python test.py
-```
-
-```
-======================================================================
-测试汇总
-======================================================================
-  通过: 30
-  失败: 0
-  总计: 30
-
-  ✓ 所有测试通过！
-```
-
-| 测试 | 覆盖内容 |
-|------|----------|
-| `test_validate_input` | 正常输入、缺少字段、错误格式、错误类型 |
-| `test_stock_code_extraction` | 正则提取、名称匹配、无代码文本 |
-| `test_sector_extraction` | 10 大板块关键词匹配、无板块回退 |
-| `test_entity_extraction` | 数字 / 日期 / 政策 / 事件 |
-| `test_news_structuring` | 完整结构化流水线 + prompt 生成 |
-| `test_parquet_output` | Parquet 字段完整性验证 |
-| `test_agent_call` | run() 标准入口 |
-| `test_full_flow` | 端到端流水线 |
-| `test_llm_prompt_generation` | CoT 引导 + few-shot + JSON 格式 |
-| `test_llm_response_parsing` | 标准 JSON / markdown / 混合文本 / 无效输入 / 字段标准化 |
-
----
-
-## ⚙️ 参数说明
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `trade_date` | string | 必填 | 交易日期 YYYY-MM-DD |
-| `news_type` | string | `all` | macro / industry / company / all |
-| `target_id` | string | None | 股票代码（获取个股新闻） |
-| `max_news_count` | int | 50 | 最大新闻条数 |
-| `output_dir` | string | `output` | 输出目录 |
-
----
-
-## 🌏 数据源
-
-### 新闻采集（AKShare — 免费，无需注册）
-
-| 数据源 | API | 条数 |
-|--------|-----|:----:|
-| 东方财富 | `ak.stock_info_global_em()` | 200 |
-| 富途牛牛 | `ak.stock_info_global_futu()` | 50 |
-| 同花顺 | `ak.stock_info_global_ths()` | 20 |
-
-详见 [data_sources.md](references/data_sources.md)。
-
-### 信号验证（PandaAI）
-
-| 套餐 | 月费 | 包含数据 |
-|------|:----:|------|
-| Pro | ¥63 | A股日线 + 指数 + 公司行为 |
-| Elite | ¥153 | 含融资融券 + 北向 + 龙虎榜 + 财务 |
-
-详见 [pandaai_api_list.md](references/pandaai_api_list.md)。
-
----
-
-## ⚠️ 注意事项
-
-- AKShare 接口有频率限制，建议请求间隔 1-2 秒
-- 新闻为实时快照，不支持历史数据
-- 按标题自动去重，跨源同一条新闻只保留一条
-- 市场背景自动采集（行情来自 AKShare，北向/龙虎榜来自 PandaAI）
-- 关联新闻自动匹配（同板块或同股票的其他新闻）
-- `.env` 文件已加入 `.gitignore`，凭证不会被提交
-
-> **免责声明：** 本项目不构成任何形式的证券投资咨询或建议。项目所有输出，包括但不限于任何交易方向、标的筛选，仅为算法逻辑的示例性展示，不代表任何投资建议或承诺。明确反对使用者将本项目输出用于真实交易。任何使用者因参考本项目代码、逻辑或示例输出而进行真实交易，必须自行承担由此产生的全部盈亏和法律风险。本项目的作者的实盘操作与任何公开的代码及示例无关。本项目不提供任何形式的实时信号推送服务，不建立任何投资交流群组。
-
----
+所有观察无硬编码，每天基于当天数据自动生成。
 
 ## 📄 许可证
 
-[Apache 2.0](LICENSE.txt)
+Apache 2.0

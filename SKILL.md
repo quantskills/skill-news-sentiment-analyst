@@ -1,239 +1,187 @@
 ---
 name: news-sentiment-analyst
-description: A-share financial news sentiment analyst. Collects news from 3 sources (Eastmoney/Futu/Tonghuashun), extracts stock codes/sectors/entities, generates FinGPT-style LLM prompts with 7-step causal reasoning, outputs structured Parquet. Use when user asks to analyze A-share news, extract stock codes from news, generate trading signals from financial news, or when Alpha/agent needs news sentiment data.
+description: A-share financial news analyst. Collects news from 3 sources (Eastmoney/Futu/Tonghuashun), analyzes each news to identify affected stocks/sectors using AI knowledge, cross-validates with PandaAI real-time price/volume/amplitude/margin/industry data. Outputs investment bank-style terminal report + Parquet. Use when user asks to analyze A-share news, understand what stocks are affected by today's news, or get a structured market overview.
 ---
 
 # News Sentiment Analyst
 
-A 股财经新闻情感分析师 — 采集新闻 → 提取实体 → 生成 LLM prompt → 输出 Parquet
+A 股财经新闻分析 — 采集 → AI 分析(自主识别股票) → PandaAI 多维度验证 → 投行级报告
 
 ## 工具定位
-- 工具类型：数据采集 + 结构化输出 + 信号验证
-- 解决问题：从多源财经新闻中提取结构化数据，生成分析师级 LLM prompt，交叉验证信号与实际行情/资金的一致性
-- 使用对象：agent / Alpha / 人工分析
+- **核心能力**：多源财经新闻采集 + AI 自主分析（识别受影响股票/板块/情感）+ PandaAI 多维度实时数据验证（OHLCV/振幅/成交额/融资变化/行业）
+- **关键差异**：不依赖正则/关键词提取股票代码，AI 用自己的知识判断新闻影响哪些股票；报告基于实际数据动态生成分析结论，无硬编码文字
+- **输出**：rich 投行风格终端报告（5 个 Section）+ Parquet 结构化文件（含增强验证数据）
 
 ## 何时使用
 
-- 用户要求分析当日 A 股新闻、新闻对交易的影响
-- 用户要求采集财经新闻并提取股票代码或板块
-- Alpha 或 agent 需要新闻情感分析数据
-- 用户要求生成新闻驱动的交易信号
-
-## 输出目录
-
-Parquet 文件默认输出到 `output/` 目录，文件名格式：`news_trading_YYYY-MM-DD.parquet`
-
-可通过 `output_dir` 参数自定义输出路径。
+- 用户要求分析今日 A 股新闻及其对市场的影响
+- 用户想知道某条新闻具体影响哪些股票
+- 用户想了解当日市场热点板块和情绪
+- Alpha 或 agent 需要结构化新闻分析数据
 
 ## 执行步骤
 
 当你触发此 skill 时，严格按以下步骤执行：
 
-### 第〇步：检查 PandaAI 配置（首次使用）
+### 第〇步：检查 PandaAI 配置
 
-```python
-import sys, os
-skill_dir = os.path.expanduser("~/.claude/skills/news-sentiment-analyst/scripts")
-if not os.path.exists(skill_dir):
-    skill_dir = os.path.join(os.getcwd(), ".claude/skills/news-sentiment-analyst/scripts")
-sys.path.insert(0, skill_dir)
-
-from auth import init_pandaai
-
-panda_ok = init_pandaai(verbose=False)
+```bash
+if [ ! -f .env ]; then
+  echo "PandaAI 未配置。"
+  echo "配置后可以获取实时股价、振幅、成交额、融资方向、行业分类等数据来验证分析。"
+  echo "请在 .env 文件中填入:"
+  echo "  PANDA_DATA_USERNAME=86手机号"
+  echo "  PANDA_DATA_PASSWORD=密码"
+fi
 ```
 
-如果 `panda_ok` 为 False，向用户说明：
+> 用户拒绝配置时跳过验证步骤，核心新闻分析不受影响。
 
-> PandaAI 未配置。配置后可以获取实时股价、融资、北向资金、龙虎榜数据来验证新闻信号。请提供你在 pandaai.online 的手机号和密码，我会写入 .env（该文件不会提交到 GitHub）。
+### 第一步：采集新闻 + 市场背景
 
-用户提供手机号和密码后，执行：
-
-```python
-env_path = os.path.join(os.path.dirname(skill_dir), ".env")
-with open(env_path, "w") as f:
-    f.write(f"PANDA_DATA_USERNAME={phone}\nPANDA_DATA_PASSWORD={password}\n")
-# 重新初始化
-init_pandaai()
+```bash
+python scripts/collector.py --date $(date +%Y-%m-%d) --max-news 30 --output /tmp/collector_output.json
 ```
 
-> 用户拒绝或跳过时，直接继续第一步（使用 AKShare 回退数据）。
+读取输出的 JSON，获取新闻列表和市场背景数据（板块涨幅 TOP5、北向资金等）。
 
-### 第一步：采集新闻 + 市场背景 + 生成 prompt
+### 第二步：AI 逐条分析新闻（核心步骤）
 
-```python
-from build import run_full_pipeline
-from datetime import date
+对每条新闻，**你作为 A 股分析师**，自主分析：
 
-today = date.today().strftime("%Y-%m-%d")
+1. **核心事件**：新闻说了什么？事实还是传闻？
+2. **受影响股票**：用你的知识判断哪些 A 股会受影响
+   - 新闻提到公司名 → 对应 A 股代码
+   - 新闻影响板块但没提公司 → 列举代表性股票
+   - 宏观政策 → 判断受益/受损行业及代表股票
+3. **受影响板块**：哪些行业/概念板块
+4. **情感判断**：正面/负面/中性
+5. **因果推理**：一句话说明为什么
 
-pipeline = run_full_pipeline(
-    trade_date=today,
-    news_type="all",
-    max_news_count=50,
-    output_dir="output"
-)
+输出格式（每条新闻一个对象，保存为 JSON 数组）：
 
-print(f"Parquet 路径: {pipeline['parquet_path']}")
-print(f"新闻数量: {pipeline['news_count']}")
-print(f"待分析 prompt 数: {len(pipeline['prompts'])}")
-print(f"涉及股票: {pipeline['summary']['stock_codes_found']}")
-print(f"涉及板块: {pipeline['summary']['sectors_found']}")
-```
-
-### 第二步：逐条 LLM 打分
-
-对 `pipeline["prompts"]` 中的每条新闻，将 `item["prompt"]` 作为完整 prompt 发送给 LLM（Claude），要求 LLM 返回 JSON 格式的情感分析结果。
-
-**LLM 输出格式要求**（必须严格遵守）：
 ```json
-{"sentiment":"positive/negative/neutral","impact_level":"high/medium/low","trading_direction":"bullish/bearish/hold","confidence":0.0-1.0,"reason":"100字以内的因果推理"}
+{
+  "news_title": "新闻原标题",
+  "affected_stocks": [
+    {"name": "股票名称", "code": "300750", "impact": "positive", "reason": "简短原因"}
+  ],
+  "affected_sectors": ["新能源"],
+  "sentiment": "positive",
+  "reasoning": "一句话因果推理"
+}
 ```
 
-**reason 规范**：必须包含因果推理链条，不能只写"利好/利空"结论。例如：
-- ✗ "储能需求增长，利好新能源"
-- ✓ "储能刚需是基本面驱动，宁德H股创新高验证逻辑，资金从AI流向新能源的避风港效应正在发生"
+> 股票代码必须是 6 位数字，不确定时留空，不要猜测。
 
-**打分方法**：你可以自己作为分析师直接对每条新闻进行 7 步因果推理分析（核心事件→传导路径→时效性→确定性→市场背景→交叉关联→反直觉检查），然后输出 JSON。不需要实际调用外部 LLM API。
+分析完毕后保存 JSON：
 
-### 第三步：写回评分结果
-
-```python
-from build import score_single_news
-
-for item in pipeline["prompts"]:
-    llm_response = '{"sentiment":"positive",...}'  # 替换为实际 LLM 输出
-    score = score_single_news(pipeline["parquet_path"], item["idx"], llm_response)
-    print(f"  {item['news_title'][:30]}... → {score['sentiment']} {score['trading_direction']} conf={score['confidence']}")
+```bash
+cat > /tmp/analysis_output.json << 'EOF'
+[
+  {"news_title":"...", "affected_stocks":[...], "affected_sectors":[...], "sentiment":"...", "reasoning":"..."}
+]
+EOF
 ```
 
-### 第四步：输出选股信号 + PandaAI 验证
+### 第三步：PandaAI 多维度验证
 
-```python
-from build import generate_signal_list
-from pandaai_integration import enrich_signals
+收集所有涉及股票代码。如果列表不为空且有 PandaAI 配置：
 
-signals = generate_signal_list(pipeline['parquet_path'], min_confidence=0.5)
-signals = enrich_signals(signals, today)
-
-# ── 市场概况 ──
-bullish_n = len([s for s in signals if s['direction'] == 'bullish'])
-bearish_n = len([s for s in signals if s['direction'] == 'bearish'])
-with_data = len([s for s in signals if s.get('verify', {}).get('price_1d') is not None])
-adj_up = len([s for s in signals if s['confidence'] > s.get('confidence_original', 0)])
-adj_down = len([s for s in signals if s['confidence'] < s.get('confidence_original', 0)])
-
-print(f"## {today} A股新闻分析报告\n")
-print(f"**市场情绪:** 🟢{bullish_n}看多 🔴{bearish_n}看空 | PandaAI数据覆盖: {with_data}/{len(signals)} | 置信度调整: {adj_up}升{adj_down}降")
-print()
-
-# ── 信号表格 ──
-print(f"| 股票代码 | 公司名称 | 方向 | 置信度 | 调整 | 近1日 | 5日 | 融资 | 行业 | 质押 |")
-print(f"|----------|----------|------|--------|------|-------|-----|------|------|------|")
-for s in signals:
-    mark = "🟢" if s["direction"] == "bullish" else "🔴"
-    orig = s.get('confidence_original', s['confidence'])
-    adj = s['confidence'] - orig
-    adj_str = f"+{adj:.2f}" if adj > 0.005 else f"{adj:.2f}" if adj < -0.005 else "—"
-    v = s.get("verify", {})
-    p1 = f"{v.get('price_1d'):+.1f}%" if v.get('price_1d') is not None else "-"
-    p5 = f"{v.get('price_5d'):+.1f}%" if v.get('price_5d') is not None else "-"
-    margin_str = v.get("margin") or "-"
-    industry_str = v.get("industry") or "-"
-    pledge_str = {"high": "⚠️高", "medium": "中", "low": "低"}.get(v.get("pledge_risk"), "-")
-    print(f"| {s['code']} | {s['name']} | {mark} {s['direction']} | {s['confidence']:.2f} | {adj_str} | {p1} | {p5} | {margin_str} | {industry_str} | {pledge_str} |")
-
-# ── 逐条详细分析 ──
-print(f"\n### 逐条分析\n")
-for s in signals:
-    mark = "🟢 看多" if s["direction"] == "bullish" else "🔴 看空"
-    print(f"**{mark} {s['name']}({s['code']})** — {s.get('analysis', '')}")
-    print(f"  来源: {s.get('news_title', '')}")
-    for alert in s.get('alerts', []):
-        print(f"  → {alert}")
-    print()
-
-print(f"共 {len(signals)} 个信号（置信度 >= 0.5）")
+```bash
+python scripts/verifier.py --codes 300750,600519 --date $(date +%Y-%m-%d) --output /tmp/verify_output.json
 ```
 
-PandaAI 未配置时 `enrich_signals()` 原样返回，验证列显示 N/A。
+验证器返回每只股票的增强数据：
+- **价格**：开盘价、最高价、最低价、收盘价、前收盘价、涨跌停价
+- **涨跌幅**：当日涨跌幅、5日涨跌幅
+- **振幅**：(最高-最低)/前收盘
+- **成交**：成交量(股)、成交额(元)、成交额(亿元)
+- **融资**：融资方向(up/down)、融资余额变化率
+- **行业**：所属行业分类
+- **股票名称**
 
-## LLM 分析框架（7 步因果推理）
+### 第四步：生成投行级报告
 
-每条新闻的 prompt 要求按以下步骤分析：
+```bash
+python scripts/reporter.py \
+  --analysis /tmp/analysis_output.json \
+  --verify /tmp/verify_output.json \
+  --market /tmp/collector_output.json \
+  --trade-date $(date +%Y-%m-%d) \
+  --output-dir output
+```
 
-1. **核心事件识别**：这条新闻到底说了什么？是事实还是传闻？
-2. **传导路径分析**：事件如何传导到股价？（事件→板块→个股）
-3. **时效性判断**：影响是即时的还是滞后的？已经反映在股价里了吗？
-4. **确定性评估**：信息有多确定？官方公告 > 媒体报道 > 市场传闻
-5. **市场背景关联**：结合当日市场背景，这条新闻在当前环境下意味着什么？
-6. **交叉关联**：和其他新闻有没有关联？形成共振还是对冲？
-7. **反直觉检查**：表面看是利好/利空，但实际呢？有没有"利好出尽"的可能？
+报告包含 5 个 Section + 情绪总览：
+
+| Section | 内容 |
+|---------|------|
+| **Section I** | 执行摘要 — 新闻覆盖、股票数量、情绪分布、活跃板块 |
+| **Section II** | 市场概况 — 指数、北向资金、板块涨幅 TOP5 |
+| **Section III** | 主题分析 — 按主题分组（地缘/科技/政策/资金等），逐条标注情绪、关联股票及PandaAI实时数据 |
+| **Section IV** | 股票数据面板 — 9 列表格（代码/名称/行业/收盘/涨跌幅/振幅/成交额/融资变化/5日涨跌/分析观点） |
+| **Section V** | 核心观察 — 基于实际数据动态生成（涨跌幅极端值/高波动标的/成交集中度/预期偏差/融资情绪/板块强弱），**无硬编码结论** |
+| **Sentiment** | 情绪总览 — 正面/负面/中性比例 |
+
+> 报告所有观察结论均通过 `_compute_observations()` 函数基于实际数据计算，每日自动适配当天数据特征。
+
+### 第五步：向用户展示
+
+将 reporter 生成的报告展示给用户，附上关键发现。
+
+## 输出文件
+
+- `output/news_analysis_YYYY-MM-DD.parquet` — 结构化分析数据（含增强 PandaAI 验证字段）
+- 终端报告直接展示给用户
 
 ## 参数说明
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| trade_date | string | 交易日期 YYYY-MM-DD（必填） |
-| news_type | string | macro / industry / company / all（默认 all） |
-| target_id | string | 股票代码（可选，获取个股新闻） |
-| max_news_count | int | 最大新闻条数（默认 50） |
-| output_dir | string | 输出目录（默认 "output"） |
+### collector.py
 
-## 输出结构
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| --date | 今天 | 交易日期 |
+| --max-news | 30 | 最大分析条数 |
+| --news-type | all | macro / company / all |
 
-Parquet 字段：trade_date, build_id, build_name, target_id, result_type, result_value, result_json, source_data_date, data_version, update_time
+### verifier.py
 
-- `news_analysis` 记录：每条新闻的提取数据 + 市场背景 + 关联新闻 + LLM prompt
-- `summary` 记录：当日汇总（股票列表、板块统计）
-- `result_value`：打分前为 `pending_ai_analysis`，打分后为 `data_ready`
-- `result_json.llm_score`：打分后的 LLM 评分结果
+| 参数 | 说明 |
+|------|------|
+| --codes | 股票代码逗号分隔, 如 300750,600519 |
+| --date | 交易日期 |
+| --output | JSON 输出路径 |
 
-详见 [references/api_guide.md](references/api_guide.md)
+### reporter.py
 
-## 可被 Alpha 调用
-- 是
-- 调用限制：需联网访问 AKShare 接口；AKShare 有频率限制，建议请求间隔 1-2 秒
-- 依赖数据：AKShare 实时新闻接口（东方财富/富途/同花顺）
+| 参数 | 说明 |
+|------|------|
+| --analysis | AI 分析 JSON 路径 |
+| --verify | PandaAI 验证 JSON 路径 |
+| --market | 市场背景 JSON 路径 |
+| --trade-date | 交易日期 |
+| --output-dir | Parquet 输出目录 |
+| --no-rich | 禁用 rich 格式 |
 
-## 是否需要生产结果
-- 是否生成 `数据库.parquet`：是
-- 更新频率：每日收盘后
-- 文件路径：`output/news_trading_YYYY-MM-DD.parquet`（可通过 output_dir 参数自定义）
+## Parquet 增强字段
 
-## 依赖
-
-### 核心依赖（必需）
-- akshare >= 1.10.0
-- pandas >= 1.5.0
-- pyarrow >= 10.0.0
-
-安装：`pip install akshare pandas pyarrow`
-
-### PandaAI 数据服务
-
-```bash
-# 安装 SDK
-pip install panda_data
-
-# 配置凭证
-cp .env.example .env
-# 编辑 .env 填入:
-#   PANDA_DATA_USERNAME=86你的手机号
-#   PANDA_DATA_PASSWORD=你的密码
-
-# 验证
-python scripts/pandaai_integration.py --market-scan
-```
-
-> Elite 套餐(¥153/月)含融资融券+北向资金+龙虎榜+财务数据。注册: https://www.pandaai.online/data-service
+| 字段 | 说明 |
+|------|------|
+| price_1d | 当日涨跌幅(%) |
+| price_5d | 5日涨跌幅(%) |
+| close/open/high/low | OHLCV 价格 |
+| amplitude | 振幅(%, (high-low)/pre_close) |
+| volume | 成交量(股) |
+| amount / amount_b | 成交额(元/亿元) |
+| num_trades | 成交笔数 |
+| margin | 融资方向(up/down) |
+| margin_change_pct | 融资余额变化率(%) |
+| industry | 行业分类 |
+| stock_name | 股票名称 |
 
 ## 注意事项
 
-- AKShare 接口有频率限制，请求间隔 1-2 秒
+- AI 自主识别股票代码基于你的知识，不确定时留空
+- PandaAI 为可选项，未配置时跳过验证步骤
 - 新闻为实时快照，不含历史数据
-- 按标题自动去重
-- 市场背景数据自动采集（大盘指数、板块涨跌）
-- 关联新闻自动匹配（同板块或同股票的其他新闻）
-- `.env` 文件已加入 `.gitignore`，不会被提交到 GitHub
-- 数据源详见 [references/data_sources.md](references/data_sources.md)
+- `.env` 文件已 gitignore
