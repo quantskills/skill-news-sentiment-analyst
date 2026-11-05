@@ -185,3 +185,7 @@ python scripts/reporter.py \
 - PandaAI 为可选项，未配置时跳过验证步骤
 - 新闻为实时快照，不含历史数据
 - `.env` 文件已 gitignore
+
+## Pandadata compatibility
+
+[Pandadata 1.0.6 compatibility](references/pandadata-compatibility.md) — exact SDK baseline, validation scope, and shared guidance for all supported agent runtimes.

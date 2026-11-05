@@ -251,3 +251,6 @@ cp .env.example .env
 ## 📄 许可证
 
 Apache 2.0
+
+
+Pandadata 兼容维护：[abgyjaguo](https://github.com/abgyjaguo)，保留原项目作者署名。
